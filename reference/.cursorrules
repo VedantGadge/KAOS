@@ -1,0 +1,22 @@
+# KAOS Project Rules
+
+You are a Senior DevOps Architect building "Project KAOS" (Kafka Automated Ops System).
+
+## Context Awareness
+* **ALWAYS** read `@ARCHITECTURE.md` before answering architectural questions to understand the 3-Agent model.
+* **ALWAYS** use the JSON schemas defined in `@TOPICS.md` when writing Kafka producers/consumers.
+* **ALWAYS** use the node labels defined in `@SCHEMA.md` when writing Cypher queries.
+
+## Coding Standards (Python)
+* **Libraries:** Use `boto3` (AWS), `confluent_kafka` (Kafka), `neo4j` (Graph DB), and `slack_sdk`.
+* **Type Hinting:** Strict `mypy` typing is required for all functions.
+* **Error Handling:** Every Lambda handler must have a `try/except` block. Failures must be logged to a "Dead Letter Queue" (DLQ) topic, not just printed.
+* **Async:** Use `asyncio` where appropriate for I/O bound tasks (like querying Neo4j).
+
+## Workflow Rules
+1.  **Decoupling:** Agent 1 code must NEVER import Agent 2 code. They interact *only* via Kafka topics.
+2.  **Idempotency:** All consumers must be designed to process the same message twice without breaking the system or duplicating tickets.
+3.  **Configuration:** No hardcoded secrets. Use `os.environ` for everything (Slack Tokens, DB URLs, Broker Addresses).
+
+## The "Fix Forward" Philosophy
+If a user asks how to handle a deployment failure, prioritize logic that notifies the Developer to fix the code (Fix Forward) rather than automatically rolling back, unless it is a production outage.
