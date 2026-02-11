@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # Slack Integration
     SLACK_BOT_TOKEN: str | None = None
 
+    # Jira Integration
+    JIRA_URL: str | None = None
+    JIRA_EMAIL: str | None = None
+    JIRA_API_TOKEN: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

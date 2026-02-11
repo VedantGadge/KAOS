@@ -94,12 +94,10 @@ def add_to_notion_dashboard(
 
         # --- DEDUPLICATION CHECK ---
         # Check if an "Open" bug with the same title already exists
-        # NOTE: Using search() because databases.query() is missing in this environment
         search_results = notion.search(query=title, filter={"value": "page", "property": "object"}).get("results", [])
         
-        # Manually filter for the correct database and status
         for page in search_results:
-            # Check database ID (some pages might be outside this DB)
+            # Check database ID
             if page.get("parent", {}).get("database_id", "").replace("-", "") == database_id.replace("-", ""):
                 props = page.get("properties", {})
                 # Check Status is 'Open'
@@ -155,28 +153,89 @@ def add_to_notion_dashboard(
 # Tool 3: Jira — Create Ticket
 # ─────────────────────────────────────────────
 @tool
-def create_jira_ticket(summary: str, description: str, project_key: str = "KAOS") -> str:
+def create_jira_ticket(summary: str, description: str, assignee: str = "", severity: str = "MEDIUM", project_key: str = "KAN") -> str:
     """
-    Create a new Jira issue for a bug or task.
+    Create a new Jira Bug issue.
     Args:
-        summary: Title of the issue.
+        summary: Title of the issue (e.g., "NullPointerException in PaymentService").
         description: Detailed description of the bug.
-        project_key: Jira Project Key (default: KAOS).
+        assignee: Name of the person to assign this ticket to.
+        severity: Severity level (CRITICAL, HIGH, MEDIUM, LOW) — mapped to Jira priority.
+        project_key: Jira Project Key (default: KAN).
     """
-    # Placeholder implementation
-    print(f"TODO: Create Jira ticket: {summary}")
-    return "JIRA-123"
+    print(f"🎫 Creating Jira ticket: {summary} (assignee: {assignee})")
+    try:
+        from jira import JIRA
+
+        # Map severity to Jira priority names
+        priority_map = {
+            "CRITICAL": "Highest",
+            "HIGH": "High",
+            "MEDIUM": "Medium",
+            "LOW": "Low",
+        }
+        priority_name = priority_map.get(severity.upper(), "Medium")
+
+        # Include assignee in description as fallback
+        full_description = description
+        if assignee:
+            full_description = f"Assigned To: {assignee}\n\n{description}"
+
+        jira = JIRA(
+            server=settings.JIRA_URL,
+            basic_auth=(settings.JIRA_EMAIL, settings.JIRA_API_TOKEN)
+        )
+
+        issue = jira.create_issue(
+            project=project_key,
+            summary=summary,
+            description=full_description,
+            issuetype={"name": "Task"},
+            priority={"name": priority_name}
+        )
+
+        # Try to assign the ticket to the user by searching Jira users
+        if assignee:
+            try:
+                users = jira.search_users(query=assignee)
+                if users:
+                    jira.assign_issue(issue, users[0].accountId)
+                    print(f"👤 Assigned to Jira user: {users[0].displayName}")
+                else:
+                    print(f"⚠️ No Jira user found for '{assignee}' — mentioned in description instead.")
+            except Exception as assign_err:
+                print(f"⚠️ Could not assign: {assign_err}")
+
+        issue_url = f"{settings.JIRA_URL}/browse/{issue.key}"
+        print(f"✅ Jira ticket created: {issue.key} — {issue_url}")
+        return f"Jira ticket created: {issue.key} | URL: {issue_url}"
+
+    except Exception as e:
+        error_msg = f"Error creating Jira ticket: {str(e)}"
+        print(f"❌ {error_msg}")
+        return error_msg
 
 # ─────────────────────────────────────────────
 # Tool 4: Slack — Send Notification
 # ─────────────────────────────────────────────
 @tool
-def send_slack_message(channel: str, text: str) -> str:
+def send_slack_message(
+    channel: str,
+    bug_title: str,
+    assignee: str,
+    service_name: str,
+    severity: str,
+    notion_url: str
+) -> str:
     """
-    Send a notification to Slack.
+    Send a bug assignment DM to the assignee and announce the bug in #all-kaos.
     Args:
         channel: Channel ID or Name (e.g., #bugs, C1234567890, or U1234567890 for DM).
-        text: Message content.
+        bug_title: Title of the bug being reported.
+        assignee: Name of the person the bug is assigned to.
+        service_name: The affected service name.
+        severity: Severity level of the bug (CRITICAL, HIGH, MEDIUM, LOW).
+        notion_url: The Notion page URL for this bug.
     """
     print(f"📨 Preparing Slack message for {channel}...")
     try:
@@ -196,16 +255,40 @@ def send_slack_message(channel: str, text: str) -> str:
             except SlackApiError as e:
                 print(f"⚠️ Could not open DM with {channel}: {e.response['error']}")
         
-        # NOTE: Slack SDK's chat_postMessage supports channel NAMES (e.g. #bugs) 
-        # as well as IDs if the bot is a member.
-
-        # Send message
-        response = client.chat_postMessage(
-            channel=target_id,
-            text=text
+        # ── Build the fixed-format DM message ──
+        dm_text = (
+            f"You have been assigned a {severity} bug in {service_name}. "
+            f"The bug has already been logged in Notion. "
+            f"Here is the link: {notion_url}"
         )
         
+        # Send the DM to the assignee
+        response = client.chat_postMessage(
+            channel=target_id,
+            text=dm_text
+        )
         print(f"✅ Slack message sent successfully to {target_id}!")
+        
+        # ── Announce in #all-kaos ──
+        announcement = (
+            f"🚨 *Bug Report Alert*\n"
+            f"───────────────────\n"
+            f"*Bug:* {bug_title}\n"
+            f"*Service:* {service_name}\n"
+            f"*Severity:* {severity}\n"
+            f"*Assigned To:* {assignee}\n"
+            f"───────────────────\n"
+            f"The team is on it. 🔧"
+        )
+        try:
+            client.chat_postMessage(
+                channel="#all-kaos",
+                text=announcement
+            )
+            print(f"📢 Announcement posted in #all-kaos")
+        except SlackApiError as e:
+            print(f"⚠️ Could not post to #all-kaos: {e.response['error']}")
+        
         return f"Message sent to {target_id}"
         
     except SlackApiError as e:
