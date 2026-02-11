@@ -13,6 +13,7 @@ def create_topics():
     topics = [
         NewTopic("system.quality.reports", num_partitions=3, replication_factor=3),
         NewTopic("dev.pr.updates", num_partitions=3, replication_factor=3),
+        NewTopic("dev.pr.decisions", num_partitions=3, replication_factor=3),
         NewTopic("ops.deploy.status", num_partitions=3, replication_factor=3)
     ]
 
