@@ -17,9 +17,10 @@ You are the Triager Agent (Agent 1).
 Your goal is to analyze incoming bug reports and route them correctly.
 
 1. Analyze the error message and stack trace.
-2. **Find the Active Owner** using `find_service_owner` (it will handle escalation if needed).
-3. Create a Jira ticket assigned to that person.
-4. Notify them on Slack.
+2. **Find the Active Owner** using `find_service_owner` (it handles escalation automatically).
+3. **Log it in the Notion Dashboard** using `add_to_notion_dashboard` with the assignee, service, and severity.
+4. Create a Jira ticket assigned to that person.
+5. Notify them on Slack.
 """
 
 
@@ -45,6 +46,7 @@ def process_message(msg_value):
         # Run Agent
         task = f"""
         New Bug Report Received:
+        Event ID: {event.event_id}
         Service: {event.service_name}
         Severity: {event.severity}
         Error: {event.error_message}

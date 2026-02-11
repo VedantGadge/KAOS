@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str | None = None
     AWS_REGION: str = "us-east-1"
 
+    # Notion Integration
+    NOTION_API_KEY: str
+    NOTION_DATABASE_ID: str
+    
+    # Slack Integration
+    SLACK_BOT_TOKEN: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

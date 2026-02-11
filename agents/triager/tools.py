@@ -1,6 +1,12 @@
 from langchain_core.tools import tool
 from shared.neo4j.client import Neo4jClient
+from notion_client import Client as NotionClient
+from config.settings import settings
+from datetime import datetime
 
+# ─────────────────────────────────────────────
+# Tool 1: Neo4j — Find Active Service Owner
+# ─────────────────────────────────────────────
 @tool
 def find_service_owner(service_name: str) -> str:
     """
@@ -29,7 +35,6 @@ def find_service_owner(service_name: str) -> str:
             print(f"⚠️ Owner {owner['name']} is {owner['status']}. Checking Team Members...")
 
         # 2. Check Team Members who WORKED_ON the service
-        # (Assuming (:Person)-[:WORKED_ON]->(:Service))
         team_query = """
         MATCH (p:Person)-[:WORKED_ON]->(s:Service {name: $service_name})
         WHERE p.status = 'Active'
@@ -43,9 +48,7 @@ def find_service_owner(service_name: str) -> str:
             neo4j.close()
             return f"Assigned to Contributor: {member['name']} (Active) | Slack: {member['slack_id']} | Reason: Owner unavailable, but {member['name']} worked on this service."
 
-        # 3. Escalate to Manager (of the Owner)
-        # We need the owner's name/ID to find their manager. 
-        # If no owner exists, we might need a fallback, but let's assume we have an owner record even if inactive.
+        # 3. Escalate to Manager
         if owner_res:
              manager_query = """
              MATCH (p:Person {name: $name})-[:REPORTS_TO]->(m:Person)
@@ -63,6 +66,94 @@ def find_service_owner(service_name: str) -> str:
     except Exception as e:
         return f"Error querying Neo4j: {str(e)}"
 
+# ─────────────────────────────────────────────
+# Tool 2: Notion — Add Bug to Dashboard
+# ─────────────────────────────────────────────
+@tool
+def add_to_notion_dashboard(
+    title: str,
+    assignee: str,
+    service_name: str,
+    severity: str,
+    description: str
+) -> str:
+    """
+    Add a bug/issue entry to the Notion Dashboard.
+    This creates a new page in the KAOS Bug Tracker database.
+    Args:
+        title: Title of the bug (e.g., "NullPointerException in ProcessTransaction").
+        assignee: Name of the person assigned to fix this.
+        service_name: The affected service (e.g., "PaymentService").
+        severity: Severity level (e.g., "CRITICAL", "HIGH", "MEDIUM", "LOW").
+        description: Detailed description of the bug.
+    """
+    print(f"📋 Adding to Notion Dashboard: {title} -> Assigned to {assignee}")
+    try:
+        notion = NotionClient(auth=settings.NOTION_API_KEY)
+        database_id = settings.NOTION_DATABASE_ID
+
+        # --- DEDUPLICATION CHECK ---
+        # Check if an "Open" bug with the same title already exists
+        # NOTE: Using search() because databases.query() is missing in this environment
+        search_results = notion.search(query=title, filter={"value": "page", "property": "object"}).get("results", [])
+        
+        # Manually filter for the correct database and status
+        for page in search_results:
+            # Check database ID (some pages might be outside this DB)
+            if page.get("parent", {}).get("database_id", "").replace("-", "") == database_id.replace("-", ""):
+                props = page.get("properties", {})
+                # Check Status is 'Open'
+                status_obj = props.get("Status", {}).get("status", {})
+                if status_obj.get("name") == "Open":
+                    page_url = page.get("url")
+                    print(f"⏭️  Duplicate found in Notion (via search). Skipping creation. URL: {page_url}")
+                    return f"Duplicate bug already exists in Notion: {page_url}"
+        # ---------------------------
+
+        # Create a new page in the Notion database
+        new_page = notion.pages.create(
+            parent={"database_id": database_id},
+            properties={
+                "Tasks": { 
+                    "title": [{"text": {"content": title}}]
+                },
+                "Text": {
+                    "rich_text": [{"text": {"content": assignee}}]
+                },
+                "Text 1": {
+                    "rich_text": [{"text": {"content": service_name}}]
+                },
+                "Severity": {
+                    "select": {"name": severity}
+                },
+                "Status": {
+                    "status": {"name": "Open"}  # Options: Open, In progress, To be reviwed, Resolved
+                },
+                "Date": {
+                    "date": {"start": datetime.now().isoformat()}
+                }
+            },
+            children=[
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"text": {"content": description}}]
+                    }
+                }
+            ]
+        )
+
+        page_url = new_page.get("url", "No URL")
+        print(f"✅ Notion Page Created: {page_url}")
+        return f"Notion page created: {page_url}"
+
+    except Exception as e:
+        return f"Error adding to Notion: {str(e)}"
+
+# ─────────────────────────────────────────────
+# Tool 3: Jira — Create Ticket
+# ─────────────────────────────────────────────
 @tool
 def create_jira_ticket(summary: str, description: str, project_key: str = "KAOS") -> str:
     """
@@ -76,17 +167,57 @@ def create_jira_ticket(summary: str, description: str, project_key: str = "KAOS"
     print(f"TODO: Create Jira ticket: {summary}")
     return "JIRA-123"
 
+# ─────────────────────────────────────────────
+# Tool 4: Slack — Send Notification
+# ─────────────────────────────────────────────
 @tool
 def send_slack_message(channel: str, text: str) -> str:
     """
     Send a notification to Slack.
     Args:
-        channel: Channel ID or Name (e.g., #bugs).
+        channel: Channel ID or Name (e.g., #bugs, C1234567890, or U1234567890 for DM).
         text: Message content.
     """
-    # Placeholder implementation
-    print(f"TODO: Send Slack message to {channel}: {text}")
-    return "Sent"
+    print(f"📨 Preparing Slack message for {channel}...")
+    try:
+        from slack_sdk import WebClient
+        from slack_sdk.errors import SlackApiError
+        
+        client = WebClient(token=settings.SLACK_BOT_TOKEN)
+        
+        target_id = channel
+        
+        # If it looks like a User ID (starts with U), try to open a DM
+        if channel.startswith('U'):
+            try:
+                open_resp = client.conversations_open(users=channel)
+                target_id = open_resp['channel']['id']
+                print(f"📡 Opened DM channel: {target_id}")
+            except SlackApiError as e:
+                print(f"⚠️ Could not open DM with {channel}: {e.response['error']}")
+        
+        # NOTE: Slack SDK's chat_postMessage supports channel NAMES (e.g. #bugs) 
+        # as well as IDs if the bot is a member.
 
-# Export tools list for LangChain
-tools = [find_service_owner, create_jira_ticket, send_slack_message]
+        # Send message
+        response = client.chat_postMessage(
+            channel=target_id,
+            text=text
+        )
+        
+        print(f"✅ Slack message sent successfully to {target_id}!")
+        return f"Message sent to {target_id}"
+        
+    except SlackApiError as e:
+        error_msg = f"Slack API Error: {e.response['error']}"
+        print(f"❌ {error_msg}")
+        return error_msg
+    except Exception as e:
+        error_msg = f"Error sending Slack message: {str(e)}"
+        print(f"❌ {error_msg}")
+        return error_msg
+
+# ─────────────────────────────────────────────
+# Export all tools for LangChain AgentExecutor
+# ─────────────────────────────────────────────
+tools = [find_service_owner, add_to_notion_dashboard, create_jira_ticket, send_slack_message]

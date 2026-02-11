@@ -12,3 +12,4 @@ uvicorn>=0.27.0
 langchain>=0.1.0
 langchain-aws>=0.1.0
 langchain-community>=0.0.10
+notion-client>=2.2.0
