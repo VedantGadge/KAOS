@@ -17,3 +17,4 @@ Thumbs.db
 # KAOS Specific
 logs/
 *.log
+*.db

@@ -2,6 +2,7 @@ from langchain_core.tools import tool
 from shared.neo4j.client import Neo4jClient
 from notion_client import Client as NotionClient
 from config.settings import settings
+from shared.logger import event_logger
 
 
 # ─────────────────────────────────────────────
@@ -22,7 +23,15 @@ def check_pr_status(repo: str, pr_id: int) -> str:
     #   - PR_SYNCHRONIZE -> check for conflicts (simulated as CLEAN here)
     #   - MERGE_CONFLICT -> explicit conflict event
     # The agent's system prompt will handle routing based on the event.
-    return f"PR #{pr_id} in {repo}: Status is CLEAN. No merge conflicts detected."
+    status = "CLEAN"
+    event_logger.log_event(
+        event_type="PR_STATUS_CHECK",
+        actor="Agent",
+        repo=repo,
+        pr_id=str(pr_id),
+        details={"status": status}
+    )
+    return f"PR #{pr_id} in {repo}: Status is {status}. No merge conflicts detected."
 
 
 # ─────────────────────────────────────────────
@@ -56,6 +65,13 @@ def find_reviewer(service_name: str, pr_author: str) -> str:
         if result:
             reviewer = result[0]
             neo4j.close()
+            event_logger.log_event(
+                event_type="REVIEW_ASSIGNED",
+                actor="Agent",
+                repo=service_name,
+                pr_id="Unknown", # Tool doesn't take PR ID, might need to enhance later
+                details={"reviewer": reviewer['name'], "role": reviewer['role'], "reason": "Senior Owner"}
+            )
             return f"Reviewer: {reviewer['name']} ({reviewer['role']}, Active) | Slack: {reviewer['slack_id']}"
 
         # Fallback: Any active person who worked on the service

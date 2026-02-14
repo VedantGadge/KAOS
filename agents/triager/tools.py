@@ -3,6 +3,7 @@ from shared.neo4j.client import Neo4jClient
 from notion_client import Client as NotionClient
 from config.settings import settings
 from datetime import datetime
+from shared.logger import event_logger
 
 # ─────────────────────────────────────────────
 # Tool 1: Neo4j — Find Active Service Owner
@@ -144,6 +145,18 @@ def add_to_notion_dashboard(
 
         page_url = new_page.get("url", "No URL")
         print(f"✅ Notion Page Created: {page_url}")
+        event_logger.log_event(
+            event_type="NOTION_TICKET_CREATED",
+            actor="Agent",
+            repo=service_name,
+            details={
+                "title": title, 
+                "description": description, 
+                "service": service_name, 
+                "url": page_url, 
+                "severity": severity
+            }
+        )
         return f"Notion page created: {page_url}"
 
     except Exception as e:
@@ -208,6 +221,17 @@ def create_jira_ticket(summary: str, description: str, assignee: str = "", sever
 
         issue_url = f"{settings.JIRA_URL}/browse/{issue.key}"
         print(f"✅ Jira ticket created: {issue.key} — {issue_url}")
+        event_logger.log_event(
+            event_type="JIRA_TICKET_CREATED",
+            actor="Agent",
+            repo="KAOS", 
+            details={
+                "key": issue.key, 
+                "summary": summary, 
+                "description": description, 
+                "url": issue_url
+            }
+        )
         return f"Jira ticket created: {issue.key} | URL: {issue_url}"
 
     except Exception as e:

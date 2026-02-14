@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     JIRA_EMAIL: str | None = None
     JIRA_API_TOKEN: str | None = None
 
+    # Database
+    DATABASE_URL: str = "sqlite:///kaos_events.db"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
