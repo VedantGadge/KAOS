@@ -249,7 +249,8 @@ def send_slack_message(
     assignee: str,
     service_name: str,
     severity: str,
-    notion_url: str
+    notion_url: str,
+    custom_message: str = ""
 ) -> str:
     """
     Send a bug assignment DM to the assignee and announce the bug in #all-kaos.
@@ -260,6 +261,7 @@ def send_slack_message(
         service_name: The affected service name.
         severity: Severity level of the bug (CRITICAL, HIGH, MEDIUM, LOW).
         notion_url: The Notion page URL for this bug.
+        custom_message: Optional custom message to send as the DM body.
     """
     print(f"📨 Preparing Slack message for {channel}...")
     try:
@@ -279,12 +281,15 @@ def send_slack_message(
             except SlackApiError as e:
                 print(f"⚠️ Could not open DM with {channel}: {e.response['error']}")
         
-        # ── Build the fixed-format DM message ──
-        dm_text = (
-            f"You have been assigned a {severity} bug in {service_name}. "
-            f"The bug has already been logged in Notion. "
-            f"Here is the link: {notion_url}"
-        )
+        # ── Build the DM message ──
+        if custom_message:
+            dm_text = custom_message
+        else:
+            dm_text = (
+                f"You have been assigned a {severity} bug in {service_name}. "
+                f"The bug has already been logged in Notion. "
+                f"Here is the link: {notion_url}"
+            )
         
         # Send the DM to the assignee
         response = client.chat_postMessage(

@@ -38,15 +38,16 @@ def check_pr_status(repo: str, pr_id: int) -> str:
 # Tool 2: Find Reviewer via Neo4j
 # ─────────────────────────────────────────────
 @tool
-def find_reviewer(service_name: str, pr_author: str) -> str:
+def find_reviewer(service_name: str, pr_author: str, pr_id: int) -> str:
     """
     Find an eligible reviewer for a PR.
     Looks for a Senior, Active engineer who owns the service but is NOT the PR author.
     Args:
         service_name: The service/repo name (e.g., "PaymentService").
         pr_author: The name of the PR author (to exclude from reviewers).
+        pr_id: The Pull Request number.
     """
-    print(f"🔍 Finding reviewer for {service_name} (excluding {pr_author})...")
+    print(f"🔍 Finding reviewer for {service_name} (excluding {pr_author}) for PR #{pr_id}...")
     try:
         neo4j = Neo4jClient()
 
@@ -69,7 +70,7 @@ def find_reviewer(service_name: str, pr_author: str) -> str:
                 event_type="REVIEW_ASSIGNED",
                 actor="Agent",
                 repo=service_name,
-                pr_id="Unknown", # Tool doesn't take PR ID, might need to enhance later
+                pr_id=str(pr_id),
                 details={"reviewer": reviewer['name'], "role": reviewer['role'], "reason": "Senior Owner"}
             )
             return f"Reviewer: {reviewer['name']} ({reviewer['role']}, Active) | Slack: {reviewer['slack_id']}"
@@ -89,10 +90,17 @@ def find_reviewer(service_name: str, pr_author: str) -> str:
         if fallback:
             reviewer = fallback[0]
             neo4j.close()
+            event_logger.log_event(
+                event_type="REVIEW_ASSIGNED",
+                actor="Agent",
+                repo=service_name,
+                pr_id=str(pr_id),
+                details={"reviewer": reviewer['name'], "role": reviewer['role'], "reason": "Fallback Contributor"}
+            )
             return f"Reviewer (fallback): {reviewer['name']} ({reviewer['role']}, Active) | Slack: {reviewer['slack_id']}"
 
         neo4j.close()
-        return f"No eligible reviewer found for {service_name} (excluding {pr_author})."
+        return f"No eligible reviewer found for {service_name} (excluding {pr_author}) for PR #{pr_id}."
 
     except Exception as e:
         return f"Error finding reviewer: {str(e)}"

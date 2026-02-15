@@ -8,6 +8,7 @@ class ReportEvent(BaseModel):
     severity: str
     error_message: str
     stack_trace: Optional[str] = None
+    suggested_assignee: Optional[str] = None
     timestamp: datetime
 
 class DevUpdateEvent(BaseModel):
@@ -33,4 +34,5 @@ class OpsStatusEvent(BaseModel):
     status: str
     failure_stage: Optional[str] = None
     logs_url: Optional[str] = None
+    author: Optional[str] = None
     timestamp: Optional[str] = None

@@ -34,9 +34,14 @@ class ReviewManagerConsumer(BaseAgentConsumer):
         # Logic for PR_OPENED (Review Needed)
         if event_type in ["PR_OPENED", "PR_SYNCHRONIZE", "PR_REOPENED"]:
             print(f"   ⚖️  Needs Reviewer...")
+            reviewer_info = "Not Assigned"
             try:
                 # 1. Find Reviewer
-                reviewer_info = find_reviewer.invoke({"service_name": repo, "pr_author": author})
+                reviewer_info = find_reviewer.invoke({
+                    "service_name": repo, 
+                    "pr_author": author,
+                    "pr_id": int(pr_id)
+                })
                 print(f"   👤 Suggested Reviewer: {reviewer_info}")
                 
                 # 2. Notify Reviewer via Slack (Mocking extracted ID)

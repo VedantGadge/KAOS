@@ -23,11 +23,15 @@ IMPORTANT RULES:
 
 Steps:
 1. Analyze the error message and stack trace.
-2. Call `find_service_owner` ONCE to find the active owner (it handles escalation automatically).
-3. Call `add_to_notion_dashboard` ONCE to log it in the Notion Dashboard with the assignee, service, and severity.
+2. **Determine Assignee**: 
+   - If a `Suggested Assignee` is provided, USE them as the assignee. Do NOT call `find_service_owner`.
+   - If NO suggested assignee is provided, call `find_service_owner` ONCE to find the active owner.
+3. Call `add_to_notion_dashboard` ONCE to log it in the Notion Dashboard.
    - If the result says "Duplicate bug already exists", STOP here and respond with a summary.
 4. Call `create_jira_ticket` ONCE to create a Jira ticket.
-5. Call `send_slack_message` ONCE to notify the assignee. Pass `channel`, `bug_title`, `assignee`, `service_name`, `severity`, and the `notion_url` (from the Notion tool result). The tool will automatically generate the DM text and post an announcement in #all-kaos. Do NOT send a separate message to #all-kaos yourself.
+5. Call `send_slack_message` ONCE to notify the assignee. 
+   - **Special Rule for Deployment Failures**: If the bug is a "Deployment Failure", the Slack message MUST be: "Your approved PR had a prod failure. Here is the AI diagnosis: <error_message>. Please look into it."
+   - Otherwise, use the standard notification text.
 
 After completing all steps, respond with a brief summary. Do NOT repeat any tool calls.
 """
@@ -60,6 +64,7 @@ def process_message(msg_value):
         Severity: {event.severity}
         Error: {event.error_message}
         Trace: {event.stack_trace}
+        Suggested Assignee: {event.suggested_assignee or 'None'}
         
         Please handle this.
         """

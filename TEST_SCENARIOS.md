@@ -71,7 +71,51 @@ This script *also* sends a `PR_OPENED` event to Kafka.
 
 ---
 
+## 4. Agent 3: Ops Manager (Deployment)
+This agent listens for `ops.deploy.status`.
+
+### Step 1: Start the Agent
+Open a terminal and run:
+```bash
+python agents/ops_manager/main.py
+```
+
+### Step 2: Simulate Success (Jira Closure)
+Create a Jira ticket for `PaymentService`. Then run:
+```bash
+python scripts/produce_ops_event.py --success
+```
+**Expected Result:** Agent 3 finds the Jira ticket, closes it, and announces success in Slack.
+
+### Step 3: Simulate Failure (Log Analysis)
+```bash
+python scripts/produce_ops_event.py --failure
+```
+**Expected Result:** Agent 3 calls Bedrock to analyze logs, announces the failure + fix in Slack, and logs a searchable `DEPLOYMENT_REPORT`.
+
+---
+
+## 5. The "Great Loop" (Autonomous Closed-Loop)
+This verifies that a production failure re-triggers the whole cycle.
+
+### Preparation:
+Start **Agent 1 (Triager)** and **Agent 3 (Ops Manager)** in separate terminals.
+
+### Step 1: Trigger a Prod Failure
+```bash
+python scripts/produce_ops_event.py --failure
+```
+
+### Step 2: Watch the Loop
+1.  **Agent 3** receives the failure, analyzes it, and calls `emit_quality_report`.
+2.  **Agent 1** automatically receives the new report.
+3.  **Agent 1** sees "suggested_assignee: Dave" and re-assigns him directly.
+4.  **Slack DM**: Dave receives: *"Your approved PR had a prod failure... please look into it."*
+
+---
+
 ## Troubleshooting
 - **ModuleNotFoundError**: Ensure you run from root (`e:\VG Codes\KAOS`).
 - **Kafka Auth Error**: Check `SASL_USERNAME` / `SASL_PASSWORD` in `.env`.
 - **Bedrock Error**: Check `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `.env`.
+- **Jira Auth Error**: Ensure your API token is valid.

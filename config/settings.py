@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
 class Settings(BaseSettings):
     # Kafka
@@ -34,9 +35,13 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///kaos_events.db"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    def current_time_iso(self) -> str:
+        from datetime import datetime
+        return datetime.utcnow().isoformat() + "Z"
 
 settings = Settings()

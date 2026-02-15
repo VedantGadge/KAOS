@@ -26,7 +26,7 @@ Handle the following scenarios:
 ## Scenario 1: PR_SYNCHRONIZE (New push / PR opened)
 1. Call `check_pr_status` ONCE with the repo and pr_id.
 2. If the PR is CLEAN:
-   - Call `find_reviewer` ONCE (pass `service_name` = repo name, `pr_author` = author name).
+   - Call `find_reviewer` ONCE (pass `service_name` = repo name, `pr_author` = author name, `pr_id` = Pull Request number).
    - Call `send_slack_dm` to DM the **reviewer** (use Slack channel from `find_reviewer`). Tell them to review PR #X in repo by author.
    - Call `send_slack_dm` to DM the **PR author** (channel = #<author_name>). Tell them that <reviewer_name> has been assigned to review their PR.
    - Call `send_slack_dm` to post in **#all-kaos**: "<author> has raised PR #X in <repo>. <reviewer> is assigned to review it."

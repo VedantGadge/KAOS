@@ -33,24 +33,19 @@ class TriagerConsumer(BaseAgentConsumer):
         severity = message.get("severity", "MEDIUM")
         
         # 2. Find Owner (Neo4j)
-        # Note: tools usually return strings. In a real agent loop, we might use an LLM router here.
-        # For this direct Kafka connection, we hardcode the logic:
-        # Find Owner -> Create Ticket.
-        print(f"   🔍 Finding owner for {service}...")
-        # Since find_service_owner is a @tool, we invoke it directly or via its func. 
-        # LangChain tools are callables but wrapped. Let's assume direct invocation works
-        # or we might need to access the underlying function if it's wrapped. 
-        # Checking tools.py in previous steps showed standard @tool. 
-        # We can call them as functions usually if we import the function, 
-        # but safely we might need .invoke or just use the logic directly if it's simple.
-        # Let's try calling it. If it fails, we'll fix.
-        try:
-           # Use .invoke() for LangChain tools
-           owner_info = find_service_owner.invoke({"service_name": service})
-           print(f"   👤 Owner Found: {owner_info}")
-        except Exception as e:
-           owner_info = "Unknown Team"
-           print(f"   ⚠️ Neo4j Lookup Failed: {e}")
+        suggested_assignee = message.get("suggested_assignee")
+        if suggested_assignee:
+            print(f"🔄 Closed-Loop: Using suggested assignee: {suggested_assignee}")
+            owner_info = f"Owner: {suggested_assignee} (Suggested) | Slack: @{suggested_assignee}"
+        else:
+            print(f"   🔍 Finding owner for {service}...")
+            try:
+                # Use .invoke() for LangChain tools
+                owner_info = find_service_owner.invoke({"service_name": service})
+                print(f"   👤 Owner Found: {owner_info}")
+            except Exception as e:
+                owner_info = "Unknown Team"
+                print(f"   ⚠️ Neo4j Lookup Failed: {e}")
 
         # 3. Create Jira Ticket
         print("   🎫 Creating Jira Ticket...")
@@ -58,9 +53,7 @@ class TriagerConsumer(BaseAgentConsumer):
             ticket_result = create_jira_ticket.invoke({
                 "summary": f"[{service}] {error[:50]}...",
                 "description": f"Automated Report:\nService: {service}\nSeverity: {severity}\nError: {error}\nOwner: {owner_info}",
-                "issue_type": "Bug" # Note: tool def doesn't have issue_type, but kwargs might be ignored or cause error if extra. 
-                # Checking tool def: create_jira_ticket(summary, description, assignee, severity, project_key)
-                # It does NOT have issue_type. remove it.
+                "severity": severity
             })
             print(f"   ✅ Ticket: {ticket_result}")
         except Exception as e:
@@ -98,8 +91,11 @@ class TriagerConsumer(BaseAgentConsumer):
             # Extract Slack ID
             # Format: ... | Slack: U12345
             slack_id = "#all-kaos"
-            if "Slack:" in owner_info:
+            if owner_info and "Slack:" in owner_info:
                 slack_id = owner_info.split("Slack:")[1].split("|")[0].strip()
+            elif owner_info and owner_info.startswith("Owner:"):
+                # Potential fallback if Slack ID is missing but name is present
+                pass
             
             slack_result = send_slack_message.invoke({
                 "channel": slack_id,
