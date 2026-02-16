@@ -64,15 +64,27 @@ def update_jira_status(summary: str, comment: str, status: str = "") -> str:
         
         if status:
             transitions = jira.transitions(issue)
-            for t in transitions:
-                if t['name'].lower() == status.lower():
-                    jira.transition_issue(issue, t['id'])
+            available = [(t['id'], t['name']) for t in transitions]
+            print(f"📋 Available transitions: {available}")
+            
+            # Try exact match first
+            target = next((t for t in transitions if t['name'].lower() == status.lower()), None)
+            
+            # Then try contains match (e.g., "Done" matches "Mark as Done")
+            if not target:
+                target = next((t for t in transitions if status.lower() in t['name'].lower()), None)
+            
+            if target:
+                jira.transition_issue(issue, target['id'])
+                print(f"✅ Transitioned {issue.key} to '{target['name']}'")
+                
+                # Update local DB if we have it
+                if issue_key and issue_key == issue.key:
+                    event_logger.update_jira_ticket_status(issue.key, status)
                     
-                    # Update local DB if we have it
-                    if issue_key and issue_key == issue.key:
-                        event_logger.update_jira_ticket_status(issue.key, status)
-                        
-                    return f"Jira {issue.key} updated with comment and transitioned to {status}."
+                return f"Jira {issue.key} updated with comment and transitioned to {target['name']}."
+            else:
+                print(f"⚠️ No transition matching '{status}'. Available: {available}")
         
         return f"Jira {issue.key} updated with comment."
 
@@ -136,7 +148,7 @@ def send_slack_dm(channel: str, text: str) -> str:
     """
     Send a direct message to a user on Slack.
     Args:
-        channel: Slack channel name or User ID (e.g., @dave, U12345).
+        channel: Slack channel name or User ID (e.g., @dave, U12345) or just a Name (e.g. "Dave").
         text: Message content.
     """
     print(f"📨 Sending Slack DM to {channel}...")
@@ -145,8 +157,27 @@ def send_slack_dm(channel: str, text: str) -> str:
         client = WebClient(token=settings.SLACK_BOT_TOKEN)
         
         target_id = channel
-        if channel.startswith('U'):
-            open_resp = client.conversations_open(users=channel)
+        
+        # 1. Resolve Name to Slack ID if needed
+        if not channel.startswith("U") and not channel.startswith("#") and not channel.startswith("@"):
+             print(f"🔍 Looking up Slack ID for name: {channel}")
+             try:
+                 neo4j = Neo4jClient()
+                 query = "MATCH (p:Person) WHERE toLower(p.name) = toLower($name) RETURN p.slack_id as slack_id"
+                 res = neo4j.query(query, {"name": channel})
+                 neo4j.close()
+                 if res and res[0].get("slack_id"):
+                     target_id = res[0]["slack_id"]
+                     print(f"✅ Resolved '{channel}' to Slack ID: {target_id}")
+                 else:
+                     print(f"⚠️ Could not resolve name '{channel}' to a Slack ID. Defaulting to #all-kaos.")
+                     target_id = "#all-kaos" 
+             except Exception as e:
+                 print(f"⚠️ Neo4j Lookup failed: {e}")
+
+        # 2. Open DM if it's a User ID
+        if target_id.startswith('U'):
+            open_resp = client.conversations_open(users=target_id)
             target_id = open_resp['channel']['id']
         
         client.chat_postMessage(channel=target_id, text=text)

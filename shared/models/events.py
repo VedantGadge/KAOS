@@ -35,4 +35,5 @@ class OpsStatusEvent(BaseModel):
     failure_stage: Optional[str] = None
     logs_url: Optional[str] = None
     author: Optional[str] = None
+    reviewer: Optional[str] = None
     timestamp: Optional[str] = None

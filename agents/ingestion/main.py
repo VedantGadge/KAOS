@@ -181,6 +181,7 @@ async def handle_deployment_webhook(payload: Dict[str, Any], background_tasks: B
             failure_stage="Deploy",
             logs_url=payload.get("logs", ""),
             author=payload.get("author", "CI/CD"), # Allow passing author
+            reviewer=payload.get("reviewer", ""), # Allow passing reviewer
             timestamp=str(time.time())
         )
 

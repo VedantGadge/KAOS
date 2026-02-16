@@ -24,28 +24,36 @@ def find_service_owner(service_name: str) -> str:
     try:
         neo4j = Neo4jClient()
         
-        # 1. Check Direct Owner
+        # Normalize service name: 'payment-service' -> 'paymentservice' for matching
+        # This allows matching regardless of kebab-case, PascalCase, etc.
+        normalized_name = service_name.replace("-", "").replace("_", "").lower()
+        logger.info(f"🔍 Normalized service name: '{service_name}' -> '{normalized_name}'")
+        
+        # 1. Check Direct Owner (case-insensitive, ignoring hyphens/underscores)
         owner_query = """
-        MATCH (p:Person)-[:OWNS]->(s:Service {name: $service_name})
+        MATCH (p:Person)-[:OWNS]->(s:Service)
+        WHERE toLower(replace(replace(s.name, '-', ''), '_', '')) = $normalized_name
         RETURN p.name as name, p.status as status, p.slack_id as slack_id
         """
-        owner_res = neo4j.query(owner_query, {"service_name": service_name})
+        owner_res = neo4j.query(owner_query, {"normalized_name": normalized_name})
         
         if owner_res:
             owner = owner_res[0]
-            if owner.get('status') == 'Active':
+            status = owner.get('status', '').lower()
+            if status == 'active':
                 neo4j.close()
                 return f"Owner: {owner['name']} (Active) | Slack: {owner['slack_id']}"
             logger.warning(f"⚠️ Owner {owner['name']} is {owner['status']}. Checking Team Members...")
 
         # 2. Check Team Members who WORKED_ON the service
         team_query = """
-        MATCH (p:Person)-[:WORKED_ON]->(s:Service {name: $service_name})
-        WHERE p.status = 'Active'
+        MATCH (p:Person)-[:WORKED_ON]->(s:Service)
+        WHERE toLower(replace(replace(s.name, '-', ''), '_', '')) = $normalized_name
+          AND toLower(p.status) = 'active'
         RETURN p.name as name, p.slack_id as slack_id
         LIMIT 1
         """
-        team_res = neo4j.query(team_query, {"service_name": service_name})
+        team_res = neo4j.query(team_query, {"normalized_name": normalized_name})
         
         if team_res:
             member = team_res[0]
@@ -247,7 +255,7 @@ def create_jira_ticket(summary: str, description: str, service_name: str, assign
             project=project_key,
             summary=summary,
             description=full_description,
-            issuetype={"name": "Task"},
+            issuetype={"name": "Bug"},
             priority={"name": priority_name}
         )
 
@@ -263,24 +271,43 @@ def create_jira_ticket(summary: str, description: str, service_name: str, assign
             except Exception as assign_err:
                 logger.warning(f"⚠️ Could not assign: {assign_err}")
 
-        # --- FIX: Ensure status is 'To Do' (not Done) ---
+        # --- FIX: Always move ticket to 'In Progress' ---
         try:
+            issue = jira.issue(issue.key)  # Refresh issue to get latest status
             current_status = issue.fields.status.name
-            logger.info(f"ℹ️ Current Jira Status: {current_status}")
+            logger.info(f"ℹ️ Current Jira Status for {issue.key}: '{current_status}'")
             
-            # Simple logic: Attempt to transition to 'To Do' if not already there
-            if current_status not in ["To Do", "Open"]:
+            # Always try to transition to In Progress (unless already there)
+            if current_status.lower() != 'in progress':
                 transitions = jira.transitions(issue)
-                # Find a transition that leads to 'To Do' or 'Open'
-                target_transition = next((t for t in transitions if t['name'].lower() in ['to do', 'open', 'backlog']), None)
+                available = [(t['id'], t['name']) for t in transitions]
+                logger.info(f"📋 Available transitions from '{current_status}': {available}")
+                
+                # Priority: In Progress first, then fallback to non-terminal states
+                target_names = ['in progress', 'doing', 'to do', 'open', 'backlog', 'reopen', 'todo']
+                target_transition = None
+                
+                for name in target_names:
+                    target_transition = next((t for t in transitions if name in t['name'].lower()), None)
+                    if target_transition:
+                        break
+                
+                if not target_transition:
+                    # Last resort: pick any transition that isn't to a terminal state
+                    target_transition = next(
+                        (t for t in transitions if t['name'].lower() not in ['done', 'resolved', 'closed', 'completed']),
+                        None
+                    )
                 
                 if target_transition:
                     jira.transition_issue(issue, target_transition['id'])
-                    logger.info(f"✅ Forced transition to '{target_transition['name']}'")
+                    logger.info(f"✅ Transitioned {issue.key} from '{current_status}' → '{target_transition['name']}'")
                 else:
-                    logger.warning(f"⚠️ Could not find transition to 'To Do'. Available: {[t['name'] for t in transitions]}")
+                    logger.warning(f"⚠️ No suitable transition found! Available: {available}")
+            else:
+                logger.info(f"✅ {issue.key} is already 'In Progress'")
         except Exception as status_err:
-            logger.warning(f"⚠️ Status check/transition failed: {status_err}")
+            logger.error(f"❌ Status transition failed for {issue.key}: {status_err}")
         # ------------------------------------------------
 
         issue_url = f"{settings.JIRA_URL}/browse/{issue.key}"
@@ -299,7 +326,7 @@ def create_jira_ticket(summary: str, description: str, service_name: str, assign
         )
         
         # Persist to local DB for tracking
-        event_logger.log_jira_ticket(service=service_name, issue_key=issue.key, summary=summary, status="To Do")
+        event_logger.log_jira_ticket(service=service_name, issue_key=issue.key, summary=summary, status="In Progress")
         
         return f"Jira ticket created: {issue.key} | URL: {issue_url}"
 

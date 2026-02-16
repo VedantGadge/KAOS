@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from shared.kafka.consumer_base import BaseAgentConsumer
 from agents.triager.tools import create_jira_ticket, find_service_owner, add_to_notion_dashboard, send_slack_message
+from agents.ops_manager.tools import update_jira_status, update_notion_status
 from shared.logger import event_logger, logger
 from config.settings import settings
 import json
@@ -48,6 +49,50 @@ class TriagerConsumer(BaseAgentConsumer):
                 owner_info = "Unknown Team"
                 logger.warning(f"   ⚠️ Neo4j Lookup Failed: {e}")
 
+        # --- EXTRACT ASSIGNEE NAME ---
+        assignee_name = "Unknown"
+        try:
+            if "Owner:" in owner_info:
+                assignee_name = owner_info.split("Owner:")[1].split("(")[0].strip()
+            elif "Contributor:" in owner_info:
+                assignee_name = owner_info.split("Contributor:")[1].split("(")[0].strip()
+            elif "Manager:" in owner_info:
+                assignee_name = owner_info.split("Manager:")[1].split("(")[0].strip()
+        except Exception as e:
+            logger.warning(f"   ⚠️ Assignee Extraction Failed: {e}")
+        
+        logger.info(f"   🕵️ Extracted Assignee: '{assignee_name}' from '{owner_info}'")
+        # -----------------------------
+
+        # --- RECURRING ISSUE CHECK ---
+        active_issue_key = event_logger.get_active_jira_ticket(service=service)
+        if active_issue_key:
+             logger.info(f"♻️  Recurring Issue: Found active ticket {active_issue_key}. Updating instead of creating new.")
+             
+             # Update Jira
+             try:
+                 update_res = update_jira_status.invoke({
+                     "summary": service, 
+                     "comment": f"⚠️ Recurring Incident/Deployment Failure: {error}", 
+                     "status": "In Progress"
+                 })
+                 logger.info(f"   ✅ Updated Existing Jira: {update_res}")
+             except Exception as e:
+                 logger.error(f"   ❌ Failed to update Jira {active_issue_key}: {e}")
+            
+             # Update Notion
+             try:
+                 notion_res = update_notion_status.invoke({
+                     "title": service,
+                     "new_status": "Needs attention"
+                 })
+                 logger.info(f"   ✅ Updated Existing Notion: {notion_res}")
+             except Exception as e:
+                 logger.error(f"   ❌ Failed to update Notion: {e}")
+
+             return # Skip creating new ticket
+        # -----------------------------
+
         # 3. Create Jira Ticket
         logger.info("   🎫 Creating Jira Ticket...")
         try:
@@ -55,7 +100,8 @@ class TriagerConsumer(BaseAgentConsumer):
                 "summary": f"[{service}] {error[:50]}...",
                 "description": f"Automated Report:\nService: {service}\nSeverity: {severity}\nError: {error}\nOwner: {owner_info}",
                 "severity": severity,
-                "service_name": service
+                "service_name": service,
+                "assignee": assignee_name
             })
             logger.info(f"   ✅ Ticket: {ticket_result}")
         except Exception as e:
@@ -65,14 +111,6 @@ class TriagerConsumer(BaseAgentConsumer):
         # 4. Add to Notion
         logger.info("   📋 Adding to Notion...")
         try:
-            # We need to extract the assignee name from the owner_info string
-            # Format: "Owner: [Name] (Active) | Slack: [ID]"
-            assignee_name = "Unknown"
-            if "Owner:" in owner_info:
-                assignee_name = owner_info.split("Owner:")[1].split("(")[0].strip()
-            elif "Contributor:" in owner_info:
-                assignee_name = owner_info.split("Contributor:")[1].split("(")[0].strip()
-            
             notion_result = add_to_notion_dashboard.invoke({
                 "title": f"[{service}] {error[:50]}...",
                 "assignee": assignee_name,
@@ -95,9 +133,6 @@ class TriagerConsumer(BaseAgentConsumer):
             slack_id = "#all-kaos"
             if owner_info and "Slack:" in owner_info:
                 slack_id = owner_info.split("Slack:")[1].split("|")[0].strip()
-            elif owner_info and owner_info.startswith("Owner:"):
-                # Potential fallback if Slack ID is missing but name is present
-                pass
             
             slack_result = send_slack_message.invoke({
                 "channel": slack_id,

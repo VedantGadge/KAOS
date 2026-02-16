@@ -68,6 +68,7 @@ INGESTION_URL = "http://localhost:8000"
 class SimulationRequest(BaseModel):
     service_name: str = "payment-service"
     error_message: str = "NullPointerException in ProcessTransaction"
+    pr_author: str = "dev_user"
 
 @app.post("/api/simulate/sentry_error")
 async def simulate_sentry_error(req: SimulationRequest):
@@ -93,7 +94,8 @@ async def simulate_pr_open(req: SimulationRequest):
         "pull_request": {
             "number": 101,
             "title": f"Fix: {req.error_message}",
-            "user": {"login": "dev_user"}
+            "user": {"login": req.pr_author},
+            "head": {"ref": "fix/simulation-error"}
         },
         "repository": {"name": req.service_name}
     }
@@ -101,6 +103,61 @@ async def simulate_pr_open(req: SimulationRequest):
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(f"{INGESTION_URL}/webhooks/github", json=payload, headers=headers)
+            return resp.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"Failed to reach Ingestion Agent: {e}")
+
+class PRDecisionRequest(BaseModel):
+    service_name: str = "payment-service"
+    pr_id: int = 101
+    decision: str  # APPROVED or CHANGES_REQUESTED
+    comment: str
+
+@app.post("/api/simulate/pr_decision")
+async def simulate_pr_decision(req: PRDecisionRequest):
+    """Simulate a GitHub PR Review webhook."""
+    payload = {
+        "action": "submitted",
+        "pull_request": {
+            "number": req.pr_id,
+            "title": "Fix: Simulation Test Error",
+            "user": {"login": "dev_user"} # Original PR author
+        },
+        "review": {
+            "state": req.decision, # "approved" or "changes_requested"
+            "body": req.comment,
+            "user": {"login": "Dave"} # Reviewer
+        },
+        "repository": {"name": req.service_name}
+    }
+    headers = {"X-GitHub-Event": "pull_request_review"}
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"{INGESTION_URL}/webhooks/github", json=payload, headers=headers)
+            return resp.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"Failed to reach Ingestion Agent: {e}")
+
+class DeploymentRequest(BaseModel):
+    service_name: str = "payment-service"
+    status: str # success or failure
+    reviewer: str = "Dave" # Added reviewer field
+
+@app.post("/api/simulate/deployment")
+async def simulate_deployment(req: DeploymentRequest):
+    """Simulate a Deployment Status webhook."""
+    payload = {
+        "service": req.service_name,
+        "version": "v1.0.5",
+        "status": req.status,
+        "logs": "Simulated deployment logs...\nError: Connection Refused" if req.status == "failure" else "Deployment successful.",
+        "author": "dev_user",
+        "reviewer": req.reviewer,
+        "env": "production"
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"{INGESTION_URL}/webhooks/deployment", json=payload)
             return resp.json()
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail=f"Failed to reach Ingestion Agent: {e}")

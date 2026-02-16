@@ -34,6 +34,89 @@
                 </div>
             </section>
 
+            <!-- Event Simulation Section -->
+            <section class="panel">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-bolt"></i> Event Simulation</h2>
+                    <p>Trigger synthetic events to test the pipeline.</p>
+                </div>
+                <div class="grid simulation-grid">
+                    
+                    <!-- Sentry Error -->
+                    <div class="card event-card">
+                        <div class="card-icon error"><i class="fa-solid fa-bug"></i></div>
+                        <div class="card-content">
+                            <h3>Sentry Error</h3>
+                            <p>Simulate a critical application crash.</p>
+                        </div>
+                        <button onclick="simulate('sentry_error')" class="btn secondary">
+                            Trigger <i class="fa-solid fa-arrow-right"></i>
+                        </button>
+                    </div>
+
+                    <!-- GitHub PR Open -->
+                    <div class="card event-card">
+                        <div class="card-icon success"><i class="fa-solid fa-code-branch"></i></div>
+                        <div class="card-content">
+                            <h3>GitHub PR Open</h3>
+                            <p>Simulate a new Pull Request event.</p>
+                            <div style="margin-top: 0.5rem;">
+                                <label style="font-size: 0.8rem; color: var(--text-secondary);">Author:</label>
+                                <select id="pr-author-select" style="background: var(--bg-color); color: var(--text-primary); border: 1px solid var(--border); padding: 0.2rem; border-radius: 4px; font-size: 0.8rem;">
+                                    <option value="dev_user">External (dev_user)</option>
+                                    <option value="Dave">Internal (Dave)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button onclick="simulate('pr_open')" class="btn secondary">
+                            Trigger <i class="fa-solid fa-arrow-right"></i>
+                        </button>
+                    </div>
+
+                    <!-- PR Review Decision -->
+                    <div class="card event-card">
+                        <div class="card-icon info"><i class="fa-solid fa-gavel"></i></div>
+                        <div class="card-content">
+                            <h3>PR Review</h3>
+                            <p>Simulate a reviewer decision.</p>
+                        </div>
+                        <div class="card-actions-row">
+                            <button onclick="simulate('pr_decision', 'APPROVED')" class="btn btn-success" style="background:var(--success);color:white;border:none;">
+                                <i class="fa-solid fa-check"></i> Approve
+                            </button>
+                            <button onclick="simulate('pr_decision', 'CHANGES_REQUESTED')" class="btn btn-danger" style="background:var(--error);color:white;border:none;">
+                                <i class="fa-solid fa-xmark"></i> Reject
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Deployment Status -->
+                    <div class="card event-card">
+                        <div class="card-icon success"><i class="fa-solid fa-rocket"></i></div>
+                        <div class="card-content">
+                            <h3>Deployment</h3>
+                            <p>Simulate a deployment outcome.</p>
+                            <div style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
+                                <label style="font-size: 0.8rem; color: var(--text-secondary);">Reviewer:</label>
+                                <select id="deploy-reviewer-select" style="background: var(--bg-color); color: var(--text-primary); border: 1px solid var(--border); padding: 0.2rem; border-radius: 4px; font-size: 0.8rem; width: 100%;">
+                                    <option value="Dave">Internal (Dave)</option>
+                                    <option value="Charlie">Internal (Charlie)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card-actions-row">
+                            <button onclick="simulate('deployment', 'success')" class="btn btn-success" style="background:var(--success);color:white;border:none;">
+                                <i class="fa-solid fa-check"></i> Success
+                            </button>
+                            <button onclick="simulate('deployment', 'failure')" class="btn btn-danger" style="background:var(--error);color:white;border:none;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> Fail
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
             <!-- Console Logs Section -->
             <section class="panel">
                 <div class="panel-header">

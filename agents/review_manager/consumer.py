@@ -55,13 +55,13 @@ class ReviewManagerConsumer(BaseAgentConsumer):
                 })
                 
                 # 3. Update Jira (if linked)
-                # We assume the PR title/body contains the bug summary or ID.
-                # For this test, we accept a "related_bug_summary" field in the event or guess it.
                 related_bug_summary = message.get("title", "")
                 if related_bug_summary:
+                    # Pass 'service_name=repo' to help lookup the ticket by service key if summary doesn't match
                     update_jira_status.invoke({
                         "summary": related_bug_summary,
-                        "comment": f"PR #{pr_id} opened by {author}. Reviewer assigned: {reviewer_info}"
+                        "comment": f"PR #{pr_id} opened by {author}. Reviewer assigned: {reviewer_info}",
+                        "service_name": repo
                     })
 
             except Exception as e:

@@ -185,16 +185,38 @@ async function stopAgent(name) {
     }
 }
 
-async function simulate(type) {
-    showToast(`Triggering simulation: ${type}...`, 'info');
+async function simulate(type, option = null) {
+    showToast(`Triggering simulation: ${type} ${option ? '(' + option + ')' : ''}...`, 'info');
+    
+    let payload = {
+        service_name: 'payment-service'
+    };
+
+    if (type === 'sentry_error' || type === 'pr_open') {
+        payload.error_message = 'Simulation Test Error';
+        if (type === 'pr_open') {
+            const authorSelect = document.getElementById('pr-author-select');
+            if (authorSelect) {
+                payload.pr_author = authorSelect.value;
+            }
+        }
+    } else if (type === 'pr_decision') {
+        payload.pr_id = 101;
+        payload.decision = option; // APPROVED or CHANGES_REQUESTED
+        payload.comment = option === 'APPROVED' ? 'Looks good to me!' : 'Please fix the logic error.';
+    } else if (type === 'deployment') {
+        payload.status = option; // success or failure
+        const reviewerSelect = document.getElementById('deploy-reviewer-select');
+        if (reviewerSelect) {
+            payload.reviewer = reviewerSelect.value;
+        }
+    }
+
     try {
         const res = await fetch(`/api/simulate/${type}`, { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                service_name: 'payment-service',
-                error_message: 'Simulation Test Error'
-            })
+            body: JSON.stringify(payload)
         });
         
         if (res.ok) {

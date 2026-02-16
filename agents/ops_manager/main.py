@@ -31,13 +31,14 @@ HANDLING SCENARIOS:
    - **Step 1**: Call `analyze_deployment_failure` (with Logs URL) to get the AI diagnosis.
    - **Step 2**: Call `update_jira_status` to add a comment ("Production deployment failed. Investigating..."). 
    - **Step 3**: Call `update_notion_status` to set the status to "Needs attention".
-   - **Step 4**: **Personalized Notification**: Call `send_slack_dm` to the original Author with this EXACT message: 
-     "Your approved PR has failed in prod. Here is the AI diagnosis: <DIAGNOSIS>. Please look into it."
+   - **Step 4**: **Personalized Notification**: Call `send_slack_dm` to:
+     a) The original **Author** with: "Your approved PR has failed in prod. AI diagnosis: <DIAGNOSIS>. Please look into it."
+     b) The **Reviewer** (if known) with: "A PR you reviewed has failed in prod. AI diagnosis: <DIAGNOSIS>."
      (Replace <DIAGNOSIS> with the result from analyze_deployment_failure).
    - **Step 5**: **Close the Loop**: Call `emit_quality_report` with the service, diagnosis, and Author to re-trigger Agent 1.
    - **Step 6**: Call `log_deployment_report` to record the failure.
 
-IMPORTANT: Always use the 'Author' provided in the event for DMs and quality reports. If 'Author' is 'Unknown', fallback to #all-kaos for the notification but still emit the report.
+IMPORTANT: Always use the 'Author' and 'Reviewer' provided in the event for DMs. If 'Author' is 'Unknown', fallback to #all-kaos for the notification but still emit the report.
 """
 
 def process_ops_event(msg_value: str):
@@ -59,6 +60,7 @@ def process_ops_event(msg_value: str):
         Service/Pipeline: {event.pipeline}
         Status: {event.status}
         Author: {event.author or 'Unknown'}
+        Reviewer: {event.reviewer or 'Unknown'}
         Failure Stage: {event.failure_stage or 'N/A'}
         Logs URL: {event.logs_url or 'N/A'}
 

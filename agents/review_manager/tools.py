@@ -51,15 +51,22 @@ def find_reviewer(service_name: str, pr_author: str, pr_id: int) -> str:
     try:
         neo4j = Neo4jClient()
 
-        # Query from SCHEMA.md: Find a Senior engineer who owns this service
+        # Normalize service name: 'payment-service' -> 'paymentservice' for matching
+        normalized_name = service_name.replace("-", "").replace("_", "").lower()
+        print(f"🔍 Normalized service name: '{service_name}' -> '{normalized_name}'")
+
+        # Query: Find a Senior engineer who owns this service (case-insensitive name match)
+        # CASE-INSENSITIVE EXCLUSION of pr_author
         reviewer_query = """
-        MATCH (p:Person)-[:OWNS]->(s:Service {name: $service_name})
-        WHERE p.role = 'Senior' AND p.status = 'Active' AND p.name <> $pr_author
+        MATCH (p:Person)-[:OWNS]->(s:Service)
+        WHERE toLower(replace(replace(s.name, '-', ''), '_', '')) = $normalized_name
+          AND p.role = 'Senior' AND toLower(p.status) = 'active'
+          AND toLower(p.name) <> toLower($pr_author)
         RETURN p.name as name, p.slack_id as slack_id, p.role as role
         LIMIT 1
         """
         result = neo4j.query(reviewer_query, {
-            "service_name": service_name,
+            "normalized_name": normalized_name,
             "pr_author": pr_author
         })
 
@@ -77,13 +84,15 @@ def find_reviewer(service_name: str, pr_author: str, pr_id: int) -> str:
 
         # Fallback: Any active person who worked on the service
         fallback_query = """
-        MATCH (p:Person)-[:WORKED_ON|OWNS]->(s:Service {name: $service_name})
-        WHERE p.status = 'Active' AND p.name <> $pr_author
+        MATCH (p:Person)-[:WORKED_ON|OWNS]->(s:Service)
+        WHERE toLower(replace(replace(s.name, '-', ''), '_', '')) = $normalized_name
+          AND toLower(p.status) = 'active'
+          AND toLower(p.name) <> toLower($pr_author)
         RETURN p.name as name, p.slack_id as slack_id, p.role as role
         LIMIT 1
         """
         fallback = neo4j.query(fallback_query, {
-            "service_name": service_name,
+            "normalized_name": normalized_name,
             "pr_author": pr_author
         })
 
@@ -218,7 +227,7 @@ def update_notion_status(title: str, new_status: str) -> str:
 # Tool 5: Update Jira Ticket Status
 # ─────────────────────────────────────────────
 @tool
-def update_jira_status(summary: str, comment: str, status: str = "") -> str:
+def update_jira_status(summary: str, comment: str, status: str = "", service_name: str = "") -> str:
     """
     Update a Jira ticket by adding a comment and optionally transitioning its status.
     Searches for the ticket by summary.
@@ -226,6 +235,7 @@ def update_jira_status(summary: str, comment: str, status: str = "") -> str:
         summary: Title/summary of the Jira ticket to find (e.g., "NullPointerException in PaymentService").
         comment: Comment to add to the ticket (e.g., "Merge conflict detected. Developer notified.").
         status: Optional new status to transition to (e.g., "In Progress", "Done"). Leave empty to skip transition.
+        service_name: Optional service/repo name to help lookup the ticket (e.g., "PaymentService").
     """
     print(f"🎫 Updating Jira ticket: {summary}")
     try:
@@ -238,8 +248,15 @@ def update_jira_status(summary: str, comment: str, status: str = "") -> str:
 
         issue = None
 
-        # 1. Try Persistent DB Lookup
-        issue_key = event_logger.get_active_jira_ticket(service=summary)
+        # 1. Try Persistent DB Lookup (Prioritize service_name if provided)
+        issue_key = None
+        if service_name:
+            issue_key = event_logger.get_active_jira_ticket(service=service_name)
+        
+        if not issue_key:
+             # Try using summary as service name (fallback)
+             issue_key = event_logger.get_active_jira_ticket(service=summary)
+
         if issue_key:
             try:
                 issue = jira.issue(issue_key)
@@ -249,8 +266,11 @@ def update_jira_status(summary: str, comment: str, status: str = "") -> str:
 
         # 2. Fallback to Search
         if not issue:
-            print(f"🔍 Falling back to search for '{summary}'...")
-            jql = f'summary ~ "{summary}" ORDER BY created DESC'
+            # Clean up summary for search (remove prefixes like "Fix:")
+            clean_summary = summary.replace("Fix:", "").replace("Feat:", "").strip()
+            # If the summary is very short, it might be risky, but let's try searching
+            print(f"🔍 Falling back to search for '{clean_summary}'...")
+            jql = f'summary ~ "{clean_summary}" ORDER BY created DESC'
             issues = jira.search_issues(jql, maxResults=1)
             if issues:
                 issue = issues[0]
