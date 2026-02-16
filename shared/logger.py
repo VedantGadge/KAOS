@@ -1,5 +1,7 @@
 import json
 import os
+import logging
+import sys
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
@@ -7,6 +9,35 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.dialects.postgresql import JSONB
 import boto3
 from config.settings import settings
+
+# Configure Structured Logging
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
+            "module": record.module,
+            "funcName": record.funcName,
+            "lineNo": record.lineno
+        }
+        # Add exception info if present
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        
+        return json.dumps(log_entry)
+
+def setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JsonFormatter())
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    return logger
+
+logger = setup_logger("event_logger")
 
 # Defines the base class for SQLAlchemy models
 Base = declarative_base()
@@ -31,6 +62,28 @@ class PREvent(Base):
     # in the initial phase.
     embedding = Column(Text, nullable=True)
 
+class NotionTicket(Base):
+    __tablename__ = 'notion_tickets'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    service = Column(String, nullable=False, index=True)
+    page_id = Column(String, nullable=False)
+    status = Column(String, default="Open")
+    title = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class JiraTicket(Base):
+    __tablename__ = 'jira_tickets'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    service = Column(String, nullable=False, index=True)
+    issue_key = Column(String, nullable=False)
+    status = Column(String, default="To Do")
+    summary = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class EventLogger:
     def __init__(self, connection_string: Optional[str] = None):
         # Default to local SQLite if no connection string provided
@@ -51,9 +104,9 @@ class EventLogger:
                     aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
                     aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
                 )
-                print("✅ Bedrock client initialized for embeddings.")
+                logger.info("✅ Bedrock client initialized for embeddings.")
             except Exception as e:
-                print(f"⚠️ Bedrock init failed: {e}")
+                logger.error(f"⚠️ Bedrock init failed: {e}")
 
     def _generate_embedding(self, text: str) -> Optional[List[float]]:
         """Generate embedding using AWS Bedrock (Titan)."""
@@ -71,7 +124,7 @@ class EventLogger:
             response_body = json.loads(response.get("body").read())
             return response_body.get("embedding")
         except Exception as e:
-            print(f"⚠️ Embedding generation failed: {e}")
+            logger.error(f"⚠️ Embedding generation failed: {e}")
             return None
 
     def log_event(self, 
@@ -100,7 +153,7 @@ class EventLogger:
                  
                  full_text = "\n".join(text_parts)
                  if full_text.strip():
-                     print(f"🧠 Generating embedding for event: {event_type}...")
+                     logger.info(f"🧠 Generating embedding for event: {event_type}...")
                      embedding = self._generate_embedding(full_text)
 
             details_json = json.dumps(details) if details else "{}"
@@ -117,9 +170,9 @@ class EventLogger:
             )
             session.add(new_event)
             session.commit()
-            print(f"📝 Logged event: {event_type} for PR #{pr_id}")
+            logger.info(f"📝 Logged event: {event_type} for PR #{pr_id}")
         except Exception as e:
-            print(f"❌ Failed to log event: {e}")
+            logger.error(f"❌ Failed to log event: {e}")
             session.rollback()
         finally:
             session.close()
@@ -139,6 +192,106 @@ class EventLogger:
                     "details": json.loads(event.details) if event.details else {}
                 })
             return logs
+        finally:
+            session.close()
+
+    def log_notion_ticket(self, service: str, page_id: str, title: str, status: str = "Open"):
+        """Log a new Notion ticket linkage."""
+        session = self.Session()
+        try:
+            ticket = NotionTicket(
+                service=service,
+                page_id=page_id,
+                title=title,
+                status=status
+            )
+            session.add(ticket)
+            session.commit()
+            logger.info(f"📝 Persisted Notion Ticket: {service} -> {page_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to persist Notion ticket: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
+    def get_active_notion_ticket(self, service: str) -> Optional[str]:
+        """Get the most recent Notion Page ID for a service."""
+        session = self.Session()
+        try:
+            ticket = session.query(NotionTicket).filter_by(service=service).order_by(NotionTicket.created_at.desc()).first()
+            if ticket:
+                return ticket.page_id
+            return None
+        except Exception as e:
+            logger.error(f"⚠️ Failed to lookup Notion ticket: {e}")
+            return None
+        finally:
+            session.close()
+
+    def update_notion_ticket_status(self, page_id: str, new_status: str):
+        """Update status of a persisted Notion ticket."""
+        session = self.Session()
+        try:
+            ticket = session.query(NotionTicket).filter_by(page_id=page_id).first()
+            if ticket:
+                ticket.status = new_status
+                session.commit()
+                logger.info(f"🔄 Updated local Notion record {page_id} to {new_status}")
+            else:
+                 logger.warning(f"⚠️ Local Notion record not found for {page_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to update local Notion record: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
+    def log_jira_ticket(self, service: str, issue_key: str, summary: str, status: str = "To Do"):
+        """Log a new Jira ticket linkage."""
+        session = self.Session()
+        try:
+            ticket = JiraTicket(
+                service=service,
+                issue_key=issue_key,
+                summary=summary,
+                status=status
+            )
+            session.add(ticket)
+            session.commit()
+            logger.info(f"📝 Persisted Jira Ticket: {service} -> {issue_key}")
+        except Exception as e:
+            logger.error(f"❌ Failed to persist Jira ticket: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
+    def get_active_jira_ticket(self, service: str) -> Optional[str]:
+        """Get the most recent Jira Issue Key for a service."""
+        session = self.Session()
+        try:
+            ticket = session.query(JiraTicket).filter_by(service=service).order_by(JiraTicket.created_at.desc()).first()
+            if ticket:
+                return ticket.issue_key
+            return None
+        except Exception as e:
+            logger.error(f"⚠️ Failed to lookup Jira ticket: {e}")
+            return None
+        finally:
+            session.close()
+
+    def update_jira_ticket_status(self, issue_key: str, new_status: str):
+        """Update status of a persisted Jira ticket."""
+        session = self.Session()
+        try:
+            ticket = session.query(JiraTicket).filter_by(issue_key=issue_key).first()
+            if ticket:
+                ticket.status = new_status
+                session.commit()
+                logger.info(f"🔄 Updated local Jira record {issue_key} to {new_status}")
+            else:
+                 logger.warning(f"⚠️ Local Jira record not found for {issue_key}")
+        except Exception as e:
+            logger.error(f"❌ Failed to update local Jira record: {e}")
+            session.rollback()
         finally:
             session.close()
 

@@ -6,26 +6,27 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from shared.kafka.consumer_base import BaseAgentConsumer
 from agents.triager.tools import create_jira_ticket, find_service_owner, add_to_notion_dashboard, send_slack_message
-from shared.logger import event_logger
+from shared.logger import event_logger, logger
+from config.settings import settings
 import json
 
 class TriagerConsumer(BaseAgentConsumer):
     def __init__(self):
         # Production Group ID ensures we don't re-process events we've already committed.
         # If you restart the agent, it picks up where it left off.
-        prod_group = "triager-prod-group"
-        print(f"🔧 Production Mode: Using stable group {prod_group}")
+        prod_group = settings.GROUP_TRIAGER_PROD
+        logger.info(f"🔧 Production Mode: Using stable group {prod_group}")
         
         super().__init__(
             group_id=prod_group,
-            topics=["system.quality.reports"]
+            topics=[settings.TOPIC_QUALITY_REPORTS]
         )
 
     def process_message(self, message: dict):
         """
         Handle 'system.quality.reports' events (Bugs/Incidents).
         """
-        print(f"🕵️ Triager analysing event: {message.get('event_id')}")
+        logger.info(f"🕵️ Triager analysing event: {message.get('event_id')}")
         
         # 1. Extract Details
         service = message.get("service_name", "Unknown")
@@ -35,33 +36,34 @@ class TriagerConsumer(BaseAgentConsumer):
         # 2. Find Owner (Neo4j)
         suggested_assignee = message.get("suggested_assignee")
         if suggested_assignee:
-            print(f"🔄 Closed-Loop: Using suggested assignee: {suggested_assignee}")
+            logger.info(f"🔄 Closed-Loop: Using suggested assignee: {suggested_assignee}")
             owner_info = f"Owner: {suggested_assignee} (Suggested) | Slack: @{suggested_assignee}"
         else:
-            print(f"   🔍 Finding owner for {service}...")
+            logger.info(f"   🔍 Finding owner for {service}...")
             try:
                 # Use .invoke() for LangChain tools
                 owner_info = find_service_owner.invoke({"service_name": service})
-                print(f"   👤 Owner Found: {owner_info}")
+                logger.info(f"   👤 Owner Found: {owner_info}")
             except Exception as e:
                 owner_info = "Unknown Team"
-                print(f"   ⚠️ Neo4j Lookup Failed: {e}")
+                logger.warning(f"   ⚠️ Neo4j Lookup Failed: {e}")
 
         # 3. Create Jira Ticket
-        print("   🎫 Creating Jira Ticket...")
+        logger.info("   🎫 Creating Jira Ticket...")
         try:
             ticket_result = create_jira_ticket.invoke({
                 "summary": f"[{service}] {error[:50]}...",
                 "description": f"Automated Report:\nService: {service}\nSeverity: {severity}\nError: {error}\nOwner: {owner_info}",
-                "severity": severity
+                "severity": severity,
+                "service_name": service
             })
-            print(f"   ✅ Ticket: {ticket_result}")
+            logger.info(f"   ✅ Ticket: {ticket_result}")
         except Exception as e:
             ticket_result = f"Failed to create ticket: {e}"
-            print(f"   ❌ Jira Create Failed: {e}")
+            logger.error(f"   ❌ Jira Create Failed: {e}")
 
         # 4. Add to Notion
-        print("   📋 Adding to Notion...")
+        logger.info("   📋 Adding to Notion...")
         try:
             # We need to extract the assignee name from the owner_info string
             # Format: "Owner: [Name] (Active) | Slack: [ID]"
@@ -80,13 +82,13 @@ class TriagerConsumer(BaseAgentConsumer):
             })
             # unique string return from tool: "Notion page created: [URL]"
             notion_url = str(notion_result).split(": ")[-1] if ": " in str(notion_result) else "http://notion.so/unknown"
-            print(f"   ✅ Notion: {notion_result}")
+            logger.info(f"   ✅ Notion: {notion_result}")
         except Exception as e:
             notion_url = "http://notion.so/failed"
-            print(f"   ❌ Notion Add Failed: {e}")
+            logger.error(f"   ❌ Notion Add Failed: {e}")
 
         # 5. Send Slack Message
-        print("   📨 Sending Slack Message...")
+        logger.info("   📨 Sending Slack Message...")
         try:
             # Extract Slack ID
             # Format: ... | Slack: U12345
@@ -105,9 +107,9 @@ class TriagerConsumer(BaseAgentConsumer):
                 "severity": severity,
                 "notion_url": notion_url
             })
-            print(f"   ✅ Slack: {slack_result}")
+            logger.info(f"   ✅ Slack: {slack_result}")
         except Exception as e:
-            print(f"   ❌ Slack Send Failed: {e}")
+            logger.error(f"   ❌ Slack Send Failed: {e}")
 
         # 6. Log to EventLogger (with Embeddings!)
         event_logger.log_event(
@@ -124,6 +126,6 @@ class TriagerConsumer(BaseAgentConsumer):
         )
 
 if __name__ == "__main__":
-    print("🚀 Starting Agent 1 (Triager) Listener...")
+    logger.info("🚀 Starting Agent 1 (Triager) Listener...")
     consumer = TriagerConsumer()
     consumer.run()

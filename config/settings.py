@@ -9,6 +9,15 @@ class Settings(BaseSettings):
     SECURITY_PROTOCOL: str = "SASL_SSL"
     SASL_MECHANISM: str = "PLAIN"
 
+    # Kafka Topics
+    TOPIC_QUALITY_REPORTS: str = "system.quality.reports"
+    TOPIC_PR_UPDATES: str = "dev.pr.updates"
+    TOPIC_PR_DECISIONS: str = "dev.pr.decisions"
+    TOPIC_DEPLOY_STATUS: str = "ops.deploy.status"
+    
+    # Consumer Groups
+    GROUP_TRIAGER_PROD: str = "triager-prod-group"
+
     # Neo4j
     NEO4J_URI: str
     NEO4J_USERNAME: str

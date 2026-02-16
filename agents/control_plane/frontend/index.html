@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KAOS Control Plane</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo">
+                <i class="fa-solid fa-network-wired"></i>
+                <h1>KAOS Control Plane</h1>
+            </div>
+            <div class="status-badge" id="system-status">
+                <span class="dot"></span> System Ready
+            </div>
+        </header>
+
+        <main>
+            <!-- Agent Management Section -->
+            <section class="panel">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-robot"></i> Agents</h2>
+                    <p>Manage the lifecycle of autonomous agents.</p>
+                </div>
+                <div class="grid" id="agents-grid">
+                    <!-- Agent Cards injected by JS -->
+                </div>
+            </section>
+
+            <!-- Console Logs Section -->
+            <section class="panel">
+                <div class="panel-header">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h2><i class="fa-solid fa-terminal"></i> Console Output</h2>
+                            <p>Real-time technical logs from the application.</p>
+                        </div>
+                        <button class="btn secondary" onclick="clearLogs()">
+                            <i class="fa-solid fa-trash-can"></i> Clear
+                        </button>
+                    </div>
+                </div>
+                <div class="console-container" id="console-output">
+                    <!-- Logs will be injected here -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div id="toast-container"></div>
+    <script src="app.js"></script>
+</body>
+</html>

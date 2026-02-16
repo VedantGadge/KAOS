@@ -3,12 +3,15 @@ from shared.neo4j.client import Neo4jClient
 from notion_client import Client as NotionClient
 from config.settings import settings
 from datetime import datetime
-from shared.logger import event_logger
+from shared.logger import event_logger, logger
+from shared.utils.retries import retry_with_backoff
+import httpx
 
 # ─────────────────────────────────────────────
 # Tool 1: Neo4j — Find Active Service Owner
 # ─────────────────────────────────────────────
 @tool
+@retry_with_backoff(retries=3, backoff_in_seconds=2)
 def find_service_owner(service_name: str) -> str:
     """
     Find the best ACTIVE person to handle a service issue.
@@ -17,7 +20,7 @@ def find_service_owner(service_name: str) -> str:
     2. Any Team Member who WORKED_ON this service (if Active)
     3. Manager (Escalation)
     """
-    print(f"🔍 Finding best ACTIVE contact for {service_name}...")
+    logger.info(f"🔍 Finding best ACTIVE contact for {service_name}...")
     try:
         neo4j = Neo4jClient()
         
@@ -33,7 +36,7 @@ def find_service_owner(service_name: str) -> str:
             if owner.get('status') == 'Active':
                 neo4j.close()
                 return f"Owner: {owner['name']} (Active) | Slack: {owner['slack_id']}"
-            print(f"⚠️ Owner {owner['name']} is {owner['status']}. Checking Team Members...")
+            logger.warning(f"⚠️ Owner {owner['name']} is {owner['status']}. Checking Team Members...")
 
         # 2. Check Team Members who WORKED_ON the service
         team_query = """
@@ -71,6 +74,7 @@ def find_service_owner(service_name: str) -> str:
 # Tool 2: Notion — Add Bug to Dashboard
 # ─────────────────────────────────────────────
 @tool
+@retry_with_backoff(retries=3, backoff_in_seconds=2)
 def add_to_notion_dashboard(
     title: str,
     assignee: str,
@@ -88,25 +92,58 @@ def add_to_notion_dashboard(
         severity: Severity level (e.g., "CRITICAL", "HIGH", "MEDIUM", "LOW").
         description: Detailed description of the bug.
     """
-    print(f"📋 Adding to Notion Dashboard: {title} -> Assigned to {assignee}")
+    logger.info(f"📋 Adding to Notion Dashboard: {title} -> Assigned to {assignee}")
     try:
         notion = NotionClient(auth=settings.NOTION_API_KEY)
         database_id = settings.NOTION_DATABASE_ID
 
         # --- DEDUPLICATION CHECK ---
-        # Check if an "Open" bug with the same title already exists
-        search_results = notion.search(query=title, filter={"value": "page", "property": "object"}).get("results", [])
+        # 1. Standardize Database ID (ensure hyphens, strip whitespace)
+        db_id = database_id.strip()
+        if len(db_id) == 32 and "-" not in db_id:
+            db_id = f"{db_id[:8]}-{db_id[8:12]}-{db_id[12:16]}-{db_id[16:20]}-{db_id[20:]}"
+
+        # 2. Check if an "Open" bug with the same title already exists
+        # Note: notion.databases.query() is missing/broken in this client version, using httpx directly.
+        query_filter = {
+            "and": [
+                {
+                    "property": "Tasks",
+                    "title": {
+                        "equals": title
+                    }
+                },
+                {
+                    "property": "Status",
+                    "status": {
+                        "equals": "Open"
+                    }
+                }
+            ]
+        }
         
-        for page in search_results:
-            # Check database ID
-            if page.get("parent", {}).get("database_id", "").replace("-", "") == database_id.replace("-", ""):
-                props = page.get("properties", {})
-                # Check Status is 'Open'
-                status_obj = props.get("Status", {}).get("status", {})
-                if status_obj.get("name") == "Open":
-                    page_url = page.get("url")
-                    print(f"⏭️  Duplicate found in Notion (via search). Skipping creation. URL: {page_url}")
-                    return f"Duplicate bug already exists in Notion: {page_url}"
+        try:
+            url = f"https://api.notion.com/v1/databases/{db_id}/query"
+            headers = {
+                "Authorization": f"Bearer {settings.NOTION_API_KEY}",
+                "Notion-Version": "2022-06-28",
+                "Content-Type": "application/json"
+            }
+            
+            with httpx.Client() as client:
+                resp = client.post(url, headers=headers, json={"filter": query_filter})
+                resp.raise_for_status()
+                response = resp.json()
+
+            search_results = response.get("results", [])
+            
+            if search_results:
+                page_url = search_results[0].get("url")
+                logger.info(f"⏭️  Duplicate found in Notion. Skipping creation. URL: {page_url}")
+                return f"Duplicate bug already exists in Notion: {page_url}"
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Deduplication check failed: {e}. Proceeding with creation.")
         # ---------------------------
 
         # Create a new page in the Notion database
@@ -129,7 +166,7 @@ def add_to_notion_dashboard(
                     "status": {"name": "Open"}  # Options: Open, In progress, To be reviwed, Resolved
                 },
                 "Date": {
-                    "date": {"start": datetime.now().isoformat()}
+                    "date": {"start": datetime.utcnow().isoformat() + "Z"}
                 }
             },
             children=[
@@ -144,7 +181,7 @@ def add_to_notion_dashboard(
         )
 
         page_url = new_page.get("url", "No URL")
-        print(f"✅ Notion Page Created: {page_url}")
+        logger.info(f"✅ Notion Page Created: {page_url}")
         event_logger.log_event(
             event_type="NOTION_TICKET_CREATED",
             actor="Agent",
@@ -157,6 +194,11 @@ def add_to_notion_dashboard(
                 "severity": severity
             }
         )
+        
+        # Persist to local DB for tracking
+        page_id = new_page.get("id")
+        event_logger.log_notion_ticket(service=service_name, page_id=page_id, title=title, status="Open")
+        
         return f"Notion page created: {page_url}"
 
     except Exception as e:
@@ -166,17 +208,19 @@ def add_to_notion_dashboard(
 # Tool 3: Jira — Create Ticket
 # ─────────────────────────────────────────────
 @tool
-def create_jira_ticket(summary: str, description: str, assignee: str = "", severity: str = "MEDIUM", project_key: str = "KAN") -> str:
+@retry_with_backoff(retries=3, backoff_in_seconds=2)
+def create_jira_ticket(summary: str, description: str, service_name: str, assignee: str = "", severity: str = "MEDIUM", project_key: str = "KAN") -> str:
     """
     Create a new Jira Bug issue.
     Args:
         summary: Title of the issue (e.g., "NullPointerException in PaymentService").
         description: Detailed description of the bug.
+        service_name: The affected service (e.g., "PaymentService"). 
         assignee: Name of the person to assign this ticket to.
         severity: Severity level (CRITICAL, HIGH, MEDIUM, LOW) — mapped to Jira priority.
         project_key: Jira Project Key (default: KAN).
     """
-    print(f"🎫 Creating Jira ticket: {summary} (assignee: {assignee})")
+    logger.info(f"🎫 Creating Jira ticket: {summary} (assignee: {assignee})")
     try:
         from jira import JIRA
 
@@ -213,14 +257,35 @@ def create_jira_ticket(summary: str, description: str, assignee: str = "", sever
                 users = jira.search_users(query=assignee)
                 if users:
                     jira.assign_issue(issue, users[0].accountId)
-                    print(f"👤 Assigned to Jira user: {users[0].displayName}")
+                    logger.info(f"👤 Assigned to Jira user: {users[0].displayName}")
                 else:
-                    print(f"⚠️ No Jira user found for '{assignee}' — mentioned in description instead.")
+                    logger.warning(f"⚠️ No Jira user found for '{assignee}' — mentioned in description instead.")
             except Exception as assign_err:
-                print(f"⚠️ Could not assign: {assign_err}")
+                logger.warning(f"⚠️ Could not assign: {assign_err}")
+
+        # --- FIX: Ensure status is 'To Do' (not Done) ---
+        try:
+            current_status = issue.fields.status.name
+            logger.info(f"ℹ️ Current Jira Status: {current_status}")
+            
+            # Simple logic: Attempt to transition to 'To Do' if not already there
+            if current_status not in ["To Do", "Open"]:
+                transitions = jira.transitions(issue)
+                # Find a transition that leads to 'To Do' or 'Open'
+                target_transition = next((t for t in transitions if t['name'].lower() in ['to do', 'open', 'backlog']), None)
+                
+                if target_transition:
+                    jira.transition_issue(issue, target_transition['id'])
+                    logger.info(f"✅ Forced transition to '{target_transition['name']}'")
+                else:
+                    logger.warning(f"⚠️ Could not find transition to 'To Do'. Available: {[t['name'] for t in transitions]}")
+        except Exception as status_err:
+            logger.warning(f"⚠️ Status check/transition failed: {status_err}")
+        # ------------------------------------------------
 
         issue_url = f"{settings.JIRA_URL}/browse/{issue.key}"
-        print(f"✅ Jira ticket created: {issue.key} — {issue_url}")
+        logger.info(f"✅ Jira ticket created: {issue.key} — {issue_url}")
+        
         event_logger.log_event(
             event_type="JIRA_TICKET_CREATED",
             actor="Agent",
@@ -232,17 +297,22 @@ def create_jira_ticket(summary: str, description: str, assignee: str = "", sever
                 "url": issue_url
             }
         )
+        
+        # Persist to local DB for tracking
+        event_logger.log_jira_ticket(service=service_name, issue_key=issue.key, summary=summary, status="To Do")
+        
         return f"Jira ticket created: {issue.key} | URL: {issue_url}"
 
     except Exception as e:
         error_msg = f"Error creating Jira ticket: {str(e)}"
-        print(f"❌ {error_msg}")
+        logger.error(f"❌ {error_msg}")
         return error_msg
 
 # ─────────────────────────────────────────────
 # Tool 4: Slack — Send Notification
 # ─────────────────────────────────────────────
 @tool
+@retry_with_backoff(retries=3, backoff_in_seconds=2)
 def send_slack_message(
     channel: str,
     bug_title: str,
@@ -263,7 +333,7 @@ def send_slack_message(
         notion_url: The Notion page URL for this bug.
         custom_message: Optional custom message to send as the DM body.
     """
-    print(f"📨 Preparing Slack message for {channel}...")
+    logger.info(f"📨 Preparing Slack message for {channel}...")
     try:
         from slack_sdk import WebClient
         from slack_sdk.errors import SlackApiError
@@ -277,9 +347,9 @@ def send_slack_message(
             try:
                 open_resp = client.conversations_open(users=channel)
                 target_id = open_resp['channel']['id']
-                print(f"📡 Opened DM channel: {target_id}")
+                logger.info(f"📡 Opened DM channel: {target_id}")
             except SlackApiError as e:
-                print(f"⚠️ Could not open DM with {channel}: {e.response['error']}")
+                logger.warning(f"⚠️ Could not open DM with {channel}: {e.response['error']}")
         
         # ── Build the DM message ──
         if custom_message:
@@ -296,7 +366,7 @@ def send_slack_message(
             channel=target_id,
             text=dm_text
         )
-        print(f"✅ Slack message sent successfully to {target_id}!")
+        logger.info(f"✅ Slack message sent successfully to {target_id}!")
         
         # ── Announce in #all-kaos ──
         announcement = (
@@ -314,19 +384,19 @@ def send_slack_message(
                 channel="#all-kaos",
                 text=announcement
             )
-            print(f"📢 Announcement posted in #all-kaos")
+            logger.info(f"📢 Announcement posted in #all-kaos")
         except SlackApiError as e:
-            print(f"⚠️ Could not post to #all-kaos: {e.response['error']}")
+            logger.warning(f"⚠️ Could not post to #all-kaos: {e.response['error']}")
         
         return f"Message sent to {target_id}"
         
     except SlackApiError as e:
         error_msg = f"Slack API Error: {e.response['error']}"
-        print(f"❌ {error_msg}")
+        logger.error(f"❌ {error_msg}")
         return error_msg
     except Exception as e:
         error_msg = f"Error sending Slack message: {str(e)}"
-        print(f"❌ {error_msg}")
+        logger.error(f"❌ {error_msg}")
         return error_msg
 
 # ─────────────────────────────────────────────

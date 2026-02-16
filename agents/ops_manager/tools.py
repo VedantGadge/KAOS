@@ -39,13 +39,27 @@ def update_jira_status(summary: str, comment: str, status: str = "") -> str:
             basic_auth=(settings.JIRA_EMAIL, settings.JIRA_API_TOKEN)
         )
 
-        jql = f'summary ~ "{summary}" ORDER BY created DESC'
-        issues = jira.search_issues(jql, maxResults=1)
+        issue = None
 
-        if not issues:
+        # 1. Try Persistent DB Lookup
+        issue_key = event_logger.get_active_jira_ticket(service=summary)
+        if issue_key:
+            try:
+                issue = jira.issue(issue_key)
+                print(f"💾 Found persisted Jira Issue: {issue.key}")
+            except Exception as e:
+                print(f"⚠️ Failed to load persisted issue {issue_key}: {e}. Falling back to search.")
+
+        # 2. Fallback to Search
+        if not issue:
+            jql = f'summary ~ "{summary}" ORDER BY created DESC'
+            issues = jira.search_issues(jql, maxResults=1)
+            if issues:
+                issue = issues[0]
+
+        if not issue:
             return f"No Jira ticket found matching: {summary}"
 
-        issue = issues[0]
         jira.add_comment(issue, comment)
         
         if status:
@@ -53,6 +67,11 @@ def update_jira_status(summary: str, comment: str, status: str = "") -> str:
             for t in transitions:
                 if t['name'].lower() == status.lower():
                     jira.transition_issue(issue, t['id'])
+                    
+                    # Update local DB if we have it
+                    if issue_key and issue_key == issue.key:
+                        event_logger.update_jira_ticket_status(issue.key, status)
+                        
                     return f"Jira {issue.key} updated with comment and transitioned to {status}."
         
         return f"Jira {issue.key} updated with comment."
@@ -77,6 +96,22 @@ def update_notion_status(title: str, new_status: str) -> str:
         notion = NotionClient(auth=settings.NOTION_API_KEY)
         database_id = settings.NOTION_DATABASE_ID
 
+        # 1. Try Persistent DB Lookup
+        page_id = event_logger.get_active_notion_ticket(service=title)
+        if page_id:
+            print(f"💾 Found persisted Notion Page ID: {page_id}")
+            try:
+                notion.pages.update(
+                    page_id=page_id,
+                    properties={"Status": {"status": {"name": new_status}}}
+                )
+                event_logger.update_notion_ticket_status(page_id, new_status)
+                return f"Notion status updated to '{new_status}' (via ID: {page_id})."
+            except Exception as e:
+                print(f"⚠️ Failed to update via ID {page_id}: {e}. Falling back to search.")
+
+        # 2. Fallback: Search for the page by title
+        print(f"🔍 Falling back to search for '{title}'...")
         search_results = notion.search(
             query=title,
             filter={"value": "page", "property": "object"}
