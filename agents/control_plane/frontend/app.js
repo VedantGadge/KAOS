@@ -193,7 +193,7 @@ async function simulate(type, option = null) {
     };
 
     if (type === 'sentry_error' || type === 'pr_open') {
-        payload.error_message = 'Simulation Test Error';
+        payload.error_message = 'NullPointerException in ProcessTransaction';
         if (type === 'pr_open') {
             const authorSelect = document.getElementById('pr-author-select');
             if (authorSelect) {
@@ -201,7 +201,7 @@ async function simulate(type, option = null) {
             }
         }
     } else if (type === 'pr_decision') {
-        payload.pr_id = 101;
+        payload.pr_id = 102;
         payload.decision = option; // APPROVED or CHANGES_REQUESTED
         payload.comment = option === 'APPROVED' ? 'Looks good to me!' : 'Please fix the logic error.';
     } else if (type === 'deployment') {

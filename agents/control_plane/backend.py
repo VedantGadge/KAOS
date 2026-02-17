@@ -93,8 +93,9 @@ async def simulate_pr_open(req: SimulationRequest):
     payload = {
         "action": "opened",
         "pull_request": {
-            "number": 101,
+            "number": 102,
             "title": f"Fix: {req.error_message}",
+            "body": "This PR fixes the NullPointerException in the validation logic.",
             "user": {"login": req.pr_author},
             "head": {"ref": "fix/simulation-error"}
         },
@@ -110,7 +111,7 @@ async def simulate_pr_open(req: SimulationRequest):
 
 class PRDecisionRequest(BaseModel):
     service_name: str = "payment-service"
-    pr_id: int = 101
+    pr_id: int = 102
     decision: str  # APPROVED or CHANGES_REQUESTED
     comment: str
 
@@ -151,7 +152,7 @@ async def simulate_deployment(req: DeploymentRequest):
         "service": req.service_name,
         "version": "v1.0.5",
         "status": req.status,
-        "logs": "Simulated deployment logs...\nError: Connection Refused" if req.status == "failure" else "Deployment successful.",
+        "logs": "CRITICAL: NullPointerException in validation logic.\n   at PaymentProcessor.validate(Processor.java:45)" if req.status == "failure" else "Deployment successful.",
         "author": "dev_user",
         "reviewer": req.reviewer,
         "env": "production"

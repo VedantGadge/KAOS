@@ -94,35 +94,33 @@ class EventLogger:
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         
-        # Bedrock Client
-        self.bedrock_client = None
-        if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+        # Embedding Model (Lazy Loaded)
+        self.embedding_model = None
+
+    def _get_embedding_model(self):
+        """Lazy load the local embedding model."""
+        if not self.embedding_model:
             try:
-                self.bedrock_client = boto3.client(
-                    'bedrock-runtime',
-                    region_name=settings.AWS_REGION,
-                    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
-                )
-                logger.info("✅ Bedrock client initialized for embeddings.")
+                from sentence_transformers import SentenceTransformer
+                # Use a small, efficient model suitable for Lambdas
+                logger.info("🧠 Loading local embedding model (all-MiniLM-L6-v2)...")
+                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            except ImportError:
+                logger.error("❌ sentence-transformers not installed. Run `pip install sentence-transformers`.")
             except Exception as e:
-                logger.error(f"⚠️ Bedrock init failed: {e}")
+                logger.error(f"❌ Failed to load embedding model: {e}")
+        return self.embedding_model
 
     def _generate_embedding(self, text: str) -> Optional[List[float]]:
-        """Generate embedding using AWS Bedrock (Titan)."""
-        if not self.bedrock_client or not text:
+        """Generate embedding using local Sentence Transformer."""
+        model = self._get_embedding_model()
+        if not model or not text:
             return None
             
         try:
-            body = json.dumps({"inputText": text})
-            response = self.bedrock_client.invoke_model(
-                modelId="amazon.titan-embed-text-v1",
-                body=body,
-                contentType="application/json",
-                accept="application/json"
-            )
-            response_body = json.loads(response.get("body").read())
-            return response_body.get("embedding")
+            # Generate embedding
+            embedding = model.encode(text).tolist()
+            return embedding
         except Exception as e:
             logger.error(f"⚠️ Embedding generation failed: {e}")
             return None
@@ -143,18 +141,20 @@ class EventLogger:
         session = self.Session()
         try:
             # Auto-generate embedding if not provided and details exist
-            if embedding is None and details and self.bedrock_client:
+            if embedding is None and details:
+                 # Check/Load model
+                 if self._get_embedding_model():
                  # Construct text to embed
-                 text_parts = []
-                 if details.get("title"): text_parts.append(f"Title: {details['title']}")
-                 if details.get("description"): text_parts.append(f"Description: {details['description']}")
-                 if details.get("summary"): text_parts.append(f"Summary: {details['summary']}")
-                 if details.get("body"): text_parts.append(f"Body: {details['body']}")
-                 
-                 full_text = "\n".join(text_parts)
-                 if full_text.strip():
-                     logger.info(f"🧠 Generating embedding for event: {event_type}...")
-                     embedding = self._generate_embedding(full_text)
+                     text_parts = []
+                     if details.get("title"): text_parts.append(f"Title: {details['title']}")
+                     if details.get("description"): text_parts.append(f"Description: {details['description']}")
+                     if details.get("summary"): text_parts.append(f"Summary: {details['summary']}")
+                     if details.get("body"): text_parts.append(f"Body: {details['body']}")
+                     
+                     full_text = "\n".join(text_parts)
+                     if full_text.strip():
+                         logger.info(f"🧠 Generating embedding for event: {event_type}...")
+                         embedding = self._generate_embedding(full_text)
 
             details_json = json.dumps(details) if details else "{}"
             embedding_json = json.dumps(embedding) if embedding else None

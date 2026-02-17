@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     JIRA_EMAIL: str | None = None
     JIRA_API_TOKEN: str | None = None
 
+    # GitHub Integration
+    GITHUB_TOKEN: str | None = None
+    GITHUB_OWNER: str | None = None # e.g. "VedantGadge"
+
     # Database
     DATABASE_URL: str = "sqlite:///kaos_events.db"
 
