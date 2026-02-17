@@ -117,6 +117,30 @@
                 </div>
             </section>
 
+            <!-- Chat Interface Section -->
+            <section class="panel">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-comments"></i> Kaos Chat</h2>
+                    <p>Ask questions about bugs, PRs, and system status.</p>
+                </div>
+                <div class="chat-container">
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="message bot">
+                            <div class="message-avatar"><i class="fa-solid fa-robot"></i></div>
+                            <div class="message-content">
+                                Hello! I'm the KAOS System Bot. Ask me anything like "What happened with the PaymentService bug?" or "Who owns the Auth Service?".
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" id="chat-input" placeholder="Type your question here..." onkeypress="handleChatKey(event)">
+                        <button class="btn btn-primary" onclick="sendMessage()">
+                            <i class="fa-solid fa-paper-plane"></i> Send
+                        </button>
+                    </div>
+                </div>
+            </section>
+
             <!-- Console Logs Section -->
             <section class="panel">
                 <div class="panel-header">

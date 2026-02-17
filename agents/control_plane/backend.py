@@ -25,6 +25,7 @@ AGENTS = {
     "triager": ["python", "agents/triager/consumer.py"],
     "review_manager": ["python", "agents/review_manager/consumer.py"],
     "ops_manager": ["python", "agents/ops_manager/main.py"],
+    "chatbot": ["python", "agents/chatbot/main.py"],
 }
 
 # -----------------------------------------------------------------------------

@@ -25,7 +25,7 @@ class BaseAgent:
         self.llm = ChatBedrock(
             client=self.client,
             model_id="amazon.nova-lite-v1:0",
-            model_kwargs={"maxTokenCount": 4096, "temperature": 0.7}
+            model_kwargs={"maxTokenCount": 4096, "temperature": 0.0}
         )
         
         # Bind tools to LLM

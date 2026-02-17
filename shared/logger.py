@@ -295,5 +295,61 @@ class EventLogger:
         finally:
             session.close()
 
+    def get_bug_timeline(self, service_name: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve the full lifecycle of events for a specific service or repo.
+        Useful for answering "What happened with X?".
+        """
+        session = self.Session()
+        try:
+            # Query PR events for this service (repo)
+            events = session.query(PREvent).filter(
+                (PREvent.repo == service_name) | (PREvent.repo == service_name.lower())
+            ).order_by(PREvent.timestamp.asc()).all()
+            
+            timeline = []
+            for event in events:
+                timeline.append({
+                    "timestamp": event.timestamp.isoformat(),
+                    "event_type": event.event_type,
+                    "actor": event.actor,
+                    "details": json.loads(event.details) if event.details else {}
+                })
+            return timeline
+        except Exception as e:
+            logger.error(f"❌ Error fetching timeline for {service_name}: {e}")
+            return []
+        finally:
+            session.close()
+
+    def search_events(self, keyword: str) -> List[Dict[str, Any]]:
+        """
+        Search for events containing a specific keyword in their details.
+        Useful for "Has there been any NPE?" type questions.
+        """
+        session = self.Session()
+        try:
+            # Basic SQL LIKE query on the details JSON string
+            # In a real production app with Postgres, we'd use full-text search or pgvector
+            search_term = f"%{keyword}%"
+            events = session.query(PREvent).filter(
+                PREvent.details.like(search_term)
+            ).order_by(PREvent.timestamp.desc()).limit(20).all()
+            
+            results = []
+            for event in events:
+                 results.append({
+                    "timestamp": event.timestamp.isoformat(),
+                    "service": event.repo,
+                    "event_type": event.event_type,
+                    "details": json.loads(event.details) if event.details else {}
+                })
+            return results
+        except Exception as e:
+            logger.error(f"❌ Error searching events for {keyword}: {e}")
+            return []
+        finally:
+            session.close()
+
 # Singleton instance
 event_logger = EventLogger()

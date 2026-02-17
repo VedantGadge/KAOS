@@ -246,3 +246,78 @@ function showToast(message, type = 'info') {
         setTimeout(() => toast.remove(), 300);
     }, 3000);
 }
+
+// -----------------------------------------------------------------------------
+// Chat Interface Logic
+// -----------------------------------------------------------------------------
+async function sendMessage() {
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    // 1. Add User Message
+    addMessage('user', message);
+    input.value = '';
+    
+    // 2. Add Loading Message
+    const loadingId = addMessage('bot', '<i class="fa-solid fa-circle-notch fa-spin"></i> Thinking...');
+
+    try {
+        // 3. Call Backend (Port 8001 for Chatbot Service)
+        const response = await fetch('http://localhost:8001/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                question: message,
+                user_id: "dashboard_user"
+             })
+        });
+
+        if (!response.ok) throw new Error('Chatbot service unreachable');
+        
+        const data = await response.json();
+        
+        // 4. Update Bot Message
+        updateMessage(loadingId, data.answer);
+
+    } catch (e) {
+        updateMessage(loadingId, `⚠️ Error: ${e.message}. Is the Chatbot Agent running?`);
+    }
+}
+
+function handleChatKey(e) {
+    if (e.key === 'Enter') sendMessage();
+}
+
+function addMessage(sender, text) {
+    const container = document.getElementById('chat-messages');
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${sender}`;
+    msgDiv.id = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    const icon = sender === 'bot' ? 'fa-robot' : 'fa-user';
+    
+    msgDiv.innerHTML = `
+        <div class="message-avatar"><i class="fa-solid ${icon}"></i></div>
+        <div class="message-content">${text}</div>
+    `;
+    
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+    return msgDiv.id;
+}
+
+function updateMessage(id, newText) {
+    const msgDiv = document.getElementById(id);
+    if (msgDiv) {
+        const content = msgDiv.querySelector('.message-content');
+        // Convert newlines to <br> for display
+        content.innerHTML = newText.replace(/\n/g, '<br>'); 
+        
+        // Render markdown-like links if present (simple regex)
+        // content.innerHTML = content.innerHTML.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+        const container = document.getElementById('chat-messages');
+        container.scrollTop = container.scrollHeight;
+    }
+}
