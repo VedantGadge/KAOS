@@ -1,3 +1,9 @@
+import sys
+import os
+
+# Add project root to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from shared.neo4j.client import Neo4jClient
 
 def seed_data():
@@ -19,11 +25,14 @@ def seed_data():
     # 2. Bob (Junior Developer, On_Leave) - Owns PaymentService
     client.query("CREATE (:Person {name: 'Bob', role: 'Junior', status: 'On_Leave', slack_id: '#bob', email: 'bob@kaos.com'})")
     
-    # 3. Charlie (Junior Developer, Active) - Worked on PaymentService
-    client.query("CREATE (:Person {name: 'Charlie', role: 'Junior', status: 'Active', slack_id: '#charlie', email: 'charlie@kaos.com'})")
+    # 3. Charlie (now Senior for Reviewer role) - Owns PaymentService
+    client.query("CREATE (:Person {name: 'Charlie', role: 'Senior', status: 'Active', slack_id: '#charlie', email: 'charlie@kaos.com'})")
 
-    # 4. Dave (Senior Engineer, Active) - Owns PaymentService (for reviewer scenarios)
+    # 4. Dave (Senior Engineer, Active) - Owns PaymentService
     client.query("CREATE (:Person {name: 'Dave', role: 'Senior', status: 'Active', slack_id: '#dave', email: 'dave@kaos.com'})")
+
+    # 5. dev_user (External, Active)
+    client.query("CREATE (:Person {name: 'dev_user', role: 'External', status: 'Active', slack_id: '#dave'})")
 
     # Relationships
     
@@ -33,7 +42,7 @@ def seed_data():
         MERGE (p)-[:OWNS]->(s)
     """)
 
-    # Dave OWNS PaymentService (Senior, can review)
+    # Dave OWNS PaymentService
     client.query("""
         MATCH (p:Person {name: 'Dave'}), (s:Service {name: 'PaymentService'})
         MERGE (p)-[:OWNS]->(s)
@@ -68,8 +77,8 @@ def seed_data():
     print("- Services: PaymentService, AuthService")
     print("- Alice: Senior, Active, Owns AuthService")
     print("- Bob: Junior, On_Leave, Owns PaymentService")
-    print("- Charlie: Junior, Active, Worked on PaymentService")
-    print("- Dave: Senior, Active, Owns PaymentService (reviewer)")
+    print("- Charlie: Senior, Active, Contributor to PaymentService (Reviewer eligible)")
+    print("- Dave: Senior, Active, Owns PaymentService (Assigned bugs by default)")
     
     client.close()
 

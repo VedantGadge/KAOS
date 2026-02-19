@@ -78,7 +78,7 @@ def find_reviewer(service_name: str, pr_author: str, pr_id: int) -> str:
                 actor="Agent",
                 repo=service_name,
                 pr_id=str(pr_id),
-                details={"reviewer": reviewer['name'], "role": reviewer['role'], "reason": "Senior Owner"}
+                details={"reviewer": reviewer['name'], "role": reviewer['role'], "reason": "Senior Owner", "pr_author": pr_author}
             )
             return f"Reviewer: {reviewer['name']} ({reviewer['role']}, Active) | Slack: {reviewer['slack_id']}"
 
@@ -104,9 +104,9 @@ def find_reviewer(service_name: str, pr_author: str, pr_id: int) -> str:
                 actor="Agent",
                 repo=service_name,
                 pr_id=str(pr_id),
-                details={"reviewer": reviewer['name'], "role": reviewer['role'], "reason": "Fallback Contributor"}
+                details={"reviewer": reviewer['name'], "role": reviewer['role'], "reason": "Fallback Contributor", "pr_author": pr_author}
             )
-            return f"Reviewer (fallback): {reviewer['name']} ({reviewer['role']}, Active) | Slack: {reviewer['slack_id']}"
+            return f"Reviewer: {reviewer['name']} ({reviewer['role']}, Active) | Slack: {reviewer['slack_id']} | (Contributor)"
 
         neo4j.close()
         return f"No eligible reviewer found for {service_name} (excluding {pr_author}) for PR #{pr_id}."
@@ -285,21 +285,25 @@ def update_jira_status(summary: str, comment: str, status: str = "", service_nam
 
         # Try to transition status if provided
         if status:
-            try:
-                transitions = jira.transitions(issue)
-                for t in transitions:
-                    if t['name'].lower() == status.lower():
-                        jira.transition_issue(issue, t['id'])
-                        print(f"✅ Jira {issue.key} transitioned to '{status}'")
-                        
-                        # Update local DB if we have it
-                        if issue_key and issue_key == issue.key:
-                            event_logger.update_jira_ticket_status(issue.key, status)
-                        break
-                else:
-                    print(f"⚠️ Transition '{status}' not found. Available: {[t['name'] for t in transitions]}")
-            except Exception as te:
-                print(f"⚠️ Could not transition: {te}")
+            current_status = issue.fields.status.name
+            if current_status.lower() == status.lower():
+                 print(f"✅ Jira {issue.key} is already '{current_status}'. Skipping transition.")
+            else:
+                try:
+                    transitions = jira.transitions(issue)
+                    for t in transitions:
+                        if t['name'].lower() == status.lower():
+                            jira.transition_issue(issue, t['id'])
+                            print(f"✅ Jira {issue.key} transitioned to '{status}'")
+                            
+                            # Update local DB if we have it
+                            if issue_key and issue_key == issue.key:
+                                event_logger.update_jira_ticket_status(issue.key, status)
+                            break
+                    else:
+                        print(f"⚠️ Transition '{status}' not found. Current: '{current_status}'. Available: {[t['name'] for t in transitions]}")
+                except Exception as te:
+                    print(f"⚠️ Could not transition: {te}")
 
         issue_url = f"{settings.JIRA_URL}/browse/{issue.key}"
         return f"Jira ticket {issue.key} updated with comment. URL: {issue_url}"
@@ -311,6 +315,34 @@ def update_jira_status(summary: str, comment: str, status: str = "", service_nam
 
 
 # ─────────────────────────────────────────────
+# Tool 6: Get User Slack ID
+# ─────────────────────────────────────────────
+@tool
+def get_user_slack_id(name: str) -> str:
+    """
+    Get the Slack ID for a given user name.
+    Useful for mentioning users in public channels.
+    Args:
+        name: Name of the person (e.g., "Dave", "dev_user").
+    """
+    print(f"🔍 Looking up Slack ID for '{name}'...")
+    try:
+        neo4j = Neo4jClient()
+        query = "MATCH (p:Person) WHERE toLower(p.name) = toLower($name) RETURN p.slack_id as slack_id LIMIT 1"
+        result = neo4j.query(query, {"name": name})
+        neo4j.close()
+        
+        if result and result[0]['slack_id']:
+            return result[0]['slack_id']
+        elif name.lower() == "dev_user": 
+             # Fallback for dev_user if not found (though seed should add it)
+             return "#dave"
+        return ""
+    except Exception as e:
+        print(f"⚠️ Error looking up Slack ID: {e}")
+        return ""
+
+# ─────────────────────────────────────────────
 # Export all tools for LangChain AgentExecutor
 # ─────────────────────────────────────────────
-tools = [check_pr_status, find_reviewer, send_slack_dm, update_notion_status, update_jira_status]
+tools = [check_pr_status, find_reviewer, send_slack_dm, update_notion_status, update_jira_status, get_user_slack_id]

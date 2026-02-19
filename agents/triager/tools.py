@@ -30,20 +30,24 @@ def find_service_owner(service_name: str) -> str:
         logger.info(f"🔍 Normalized service name: '{service_name}' -> '{normalized_name}'")
         
         # 1. Check Direct Owner (case-insensitive, ignoring hyphens/underscores)
+        # PRIORITIZE ACTIVE OWNERS!
         owner_query = """
         MATCH (p:Person)-[:OWNS]->(s:Service)
         WHERE toLower(replace(replace(s.name, '-', ''), '_', '')) = $normalized_name
+          AND toLower(p.status) = 'active'
         RETURN p.name as name, p.status as status, p.slack_id as slack_id
+        LIMIT 1
         """
         owner_res = neo4j.query(owner_query, {"normalized_name": normalized_name})
         
         if owner_res:
             owner = owner_res[0]
-            status = owner.get('status', '').lower()
-            if status == 'active':
-                neo4j.close()
-                return f"Owner: {owner['name']} (Active) | Slack: {owner['slack_id']}"
-            logger.warning(f"⚠️ Owner {owner['name']} is {owner['status']}. Checking Team Members...")
+            neo4j.close()
+            return f"Owner: {owner['name']} (Active) | Slack: {owner['slack_id']}"
+            
+        # If no ACTIVE owner found, check for ANY owner to log warning? 
+        # Or just proceed to contributors. Let's proceed to contributors.
+        logger.warning(f"⚠️ No ACTIVE Owner found for {service_name}. Checking Team Members...")
 
         # 2. Check Team Members who WORKED_ON the service
         team_query = """
@@ -147,8 +151,11 @@ def add_to_notion_dashboard(
             
             if search_results:
                 page_url = search_results[0].get("url")
-                logger.info(f"⏭️  Duplicate found in Notion. Skipping creation. URL: {page_url}")
-                return f"Duplicate bug already exists in Notion: {page_url}"
+                # DEMO HACK: We want to create a new bug even if a duplicate exists, 
+                # because the user likely deleted the old one or wants a fresh run.
+                logger.info(f"⏭️  Duplicate found in Notion: {page_url}. Proceeding to create NEW one for demo.")
+                # Return early ONLY if you want to block duplicates. Commenting out return for demo.
+                # return f"Duplicate bug already exists in Notion: {page_url}"
                 
         except Exception as e:
             logger.warning(f"⚠️ Deduplication check failed: {e}. Proceeding with creation.")
@@ -300,8 +307,8 @@ def create_jira_ticket(summary: str, description: str, service_name: str, assign
                     )
                 
                 if target_transition:
-                    jira.transition_issue(issue, target_transition['id'])
-                    logger.info(f"✅ Transitioned {issue.key} from '{current_status}' → '{target_transition['name']}'")
+                    # jira.transition_issue(issue, target_transition['id']) # REMOVED: Let it stay in 'To Do'
+                    logger.info(f"ℹ️ Ticket {issue.key} created. Leaving in '{current_status}' (Agent 2 will move to In Progress).")
                 else:
                     logger.warning(f"⚠️ No suitable transition found! Available: {available}")
             else:

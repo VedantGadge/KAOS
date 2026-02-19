@@ -4,7 +4,7 @@ import logging
 import sys
 from datetime import datetime
 from typing import Dict, Any, Optional, List
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.dialects.postgresql import JSONB
 import boto3
@@ -303,9 +303,21 @@ class EventLogger:
         session = self.Session()
         try:
             # Query PR events for this service (repo)
+            # Query PR events for this service (repo)
+            # Normalize DB values: lower-case and strip hyphens/underscores for robust matching
+            # e.g. "payment-service" -> "paymentservice" == "PaymentService" -> "paymentservice"
+            
+            clean_input = service_name.lower().replace("-", "").replace("_", "").replace(" ", "")
+            
             events = session.query(PREvent).filter(
-                (PREvent.repo == service_name) | (PREvent.repo == service_name.lower())
+                func.replace(func.replace(func.lower(PREvent.repo), "-", ""), "_", "") == clean_input
             ).order_by(PREvent.timestamp.asc()).all()
+            
+            # Fallback: Try exact substring match if the above failed (e.g. for partial names)
+            if not events:
+                events = session.query(PREvent).filter(
+                    PREvent.repo.ilike(f"%{service_name}%")
+                ).order_by(PREvent.timestamp.asc()).all()
             
             timeline = []
             for event in events:

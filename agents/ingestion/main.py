@@ -131,6 +131,24 @@ async def handle_github_webhook(request: Request, background_tasks: BackgroundTa
                 value=kafka_event
             )
             return {"status": "queued", "type": "PR Update"}
+        
+        elif action == "closed" and pr.get("merged"):
+            # Map to PRUpdate (Merged)
+            kafka_event = PRUpdate(
+                event="PR_MERGED",
+                repo=repo,
+                pr_id=pr.get("number"),
+                author=pr.get("user", {}).get("login", "unknown"),
+                title=pr.get("title", ""),
+            )
+            
+            background_tasks.add_task(
+                publish_to_kafka,
+                topic=settings.TOPIC_PR_UPDATES,
+                key=f"pr-{pr.get('number')}",
+                value=kafka_event
+            )
+            return {"status": "queued", "type": "PR Merged"}
 
     elif event_type == "pull_request_review":
         review = payload.get("review", {})

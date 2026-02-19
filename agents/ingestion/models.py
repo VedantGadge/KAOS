@@ -45,7 +45,7 @@ class PRUpdate(BaseModel):
     """
     Schema for 'dev.pr.updates' topic (Review Manager).
     """
-    event: Literal["PR_OPENED", "PR_UPDATED", "PR_CLOSED"]
+    event: Literal["PR_OPENED", "PR_UPDATED", "PR_CLOSED", "PR_MERGED"]
     repo: str
     pr_id: int
     author: str

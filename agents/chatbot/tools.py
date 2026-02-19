@@ -25,22 +25,80 @@ def get_bug_timeline(service_name: str) -> str:
         
         # Format the timeline for the LLM to digest
         formatted = f"Timeline for {service_name}:\n"
+        
+        # Narrative Logic
+        seen_events = set()
+        
         for event in timeline:
-            timestamp = event['timestamp']
+            timestamp = event.get('timestamp', '').replace('T', ' ').split('.')[0]
             event_type = event['event_type']
-            actor = event['actor']
-            details = event['details']
+            actor = event.get('actor', 'Unknown')
+            details = event.get('details', {})
             
-            # Create a summary sentence per event
-            summary = f"- [{timestamp}] {event_type} by {actor}"
-            if "title" in details:
-                summary += f": {details['title']}"
-            if "status" in details:
-                summary += f" (Status: {details['status']})"
-            if "decision" in details:
-                summary += f" (Decision: {details['decision']})"
+            # Skip duplicates if any
+            event_sig = f"{event_type}-{actor}-{timestamp}"
+            if event_sig in seen_events:
+                continue
+            seen_events.add(event_sig)
+
+            # --- Story Builder ---
+            if event_type == "NOTION_TICKET_CREATED":
+                formatted += f"- [{timestamp}] 🐛 A bug '{details.get('title', 'Unknown')}' was reported in Notion by {actor}.\n"
             
-            formatted += summary + "\n"
+            elif event_type == "JIRA_TICKET_CREATED":
+                assignee = details.get("assignee")
+                if assignee:
+                    formatted += f"- [{timestamp}] 🎫 Jira ticket created and assigned to **{assignee}**.\n"
+                else:
+                    formatted += f"- [{timestamp}] 🎫 Jira ticket created for tracking.\n"
+
+            elif event_type == "PR_OPENED":
+                # Real GitHub event usually has the author
+                formatted += f"- [{timestamp}] 🔄 **{actor}** opened a Pull Request to fix the issue.\n"
+
+            elif event_type == "REVIEW_NEEDED":
+                 # If we have pr_author in details, use it
+                 pr_author = details.get("pr_author")
+                 if pr_author:
+                     formatted += f"- [{timestamp}] 🔄 **{pr_author}** opened a Pull Request to fix the issue.\n"
+                 else:
+                     formatted += f"- [{timestamp}] 🔄 A Pull Request was opened to fix the issue.\n"
+
+            elif event_type == "REVIEW_ASSIGNED":
+                reviewer = details.get("reviewer", "someone")
+                pr_author = details.get("pr_author")
+                if pr_author:
+                     formatted += f"- [{timestamp}] 👤 **{reviewer}** was assigned to review **{pr_author}'s** PR.\n"
+                else:
+                     formatted += f"- [{timestamp}] 👤 **{reviewer}** was assigned to review the PR.\n"
+
+            elif event_type == "REVIEW_SUBMITTED":
+                decision = details.get("decision", "COMMENTED")
+                comment = details.get("comment", "")
+                reviewer_actor = details.get("reviewer", actor)
+                
+                if decision == "CHANGES_REQUESTED":
+                    formatted += f"- [{timestamp}] ❌ **{reviewer_actor}** requested changes: '{comment}'\n"
+                elif decision == "APPROVED":
+                    formatted += f"- [{timestamp}] ✅ **{reviewer_actor}** approved the PR.\n"
+                else:
+                    formatted += f"- [{timestamp}] 💬 **{reviewer_actor}** commented: '{comment}'\n"
+
+            elif event_type == "PR_MERGED":
+                formatted += f"- [{timestamp}] 🔀 The PR was merged into the main branch.\n"
+
+            elif event_type == "DEPLOYMENT_REPORT":
+                status = details.get("status", "UNKNOWN")
+                if status == "FAILED":
+                    formatted += f"- [{timestamp}] 💥 Deployment to production failed. OpsManager is investigating.\n"
+                elif status == "SUCCEEDED":
+                    formatted += f"- [{timestamp}] 🚀 Deployment to production succeeded! The fix is live.\n"
+                else:
+                     formatted += f"- [{timestamp}] 🚀 Deployment Status: {status}.\n"
+
+            else:
+                # Fallback for unknown events
+                formatted += f"- [{timestamp}] ℹ️  {event_type} by {actor}\n"
             
         return formatted
     except Exception as e:
@@ -119,19 +177,21 @@ def find_team_info(service_name: str) -> str:
         
         neo4j.close()
         
-        response = f"Team Info for {service_name}:\n"
+        response = f"Team Info for {service_name}:\n\n"
         
         if owners:
             o = owners[0]
-            response += f"👑 Owner: {o['name']} ({o['role']}) - Status: {o['status']} (Slack: {o['slack_id']})\n"
+            role_text = f"({o['role']})" if o['role'] else ""
+            slack_text = f"(Slack: {o['slack_id']})" if o['slack_id'] else ""
+            response += f"👑 **Owner**\n• {o['name']} {role_text}\n• Status: {o['status']}\n• Contact: {o['slack_id'] if o['slack_id'] else 'N/A'}\n\n"
         else:
-            response += "👑 Owner: Unknown\n"
+            response += "👑 **Owner**\n• Unknown\n\n"
             
         if contributors:
             names = ", ".join([c['name'] for c in contributors])
-            response += f"🛠️ Contributors: {names}\n"
+            response += f"🛠️ **Contributors**\n• {names}\n"
         else:
-            response += "🛠️ Contributors: None found\n"
+            response += "🛠️ **Contributors**\n• None found\n"
             
         return response
 
