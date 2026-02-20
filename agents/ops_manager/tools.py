@@ -65,18 +65,24 @@ def update_jira_status(summary: str, comment: str, status: str = "") -> str:
         if status:
             transitions = jira.transitions(issue)
             available = [(t['id'], t['name']) for t in transitions]
-            print(f"📋 Available transitions: {available}")
+            print(f"📋 Available transitions for {issue.key} (Current: {issue.fields.status.name}): {available}")
             
-            # Try exact match first
+            # 1. Try exact match (case-insensitive)
             target = next((t for t in transitions if t['name'].lower() == status.lower()), None)
             
-            # Then try contains match (e.g., "Done" matches "Mark as Done")
+            # 2. Try contains match (e.g., "Done" matches "Mark as Done")
             if not target:
                 target = next((t for t in transitions if status.lower() in t['name'].lower()), None)
             
+            # 3. Special handling for "Done" / Completion
+            if not target and status.lower() in ["done", "resolved", "closed", "complete"]:
+                 # Look for any transition that implies completion
+                 completion_keywords = ["done", "resolve", "close", "complete", "finish"]
+                 target = next((t for t in transitions if any(k in t['name'].lower() for k in completion_keywords)), None)
+
             if target:
                 jira.transition_issue(issue, target['id'])
-                print(f"✅ Transitioned {issue.key} to '{target['name']}'")
+                print(f"✅ Transitioned {issue.key} to '{target['name']}' (Requested: '{status}')")
                 
                 # Update local DB if we have it
                 if issue_key and issue_key == issue.key:
@@ -85,6 +91,7 @@ def update_jira_status(summary: str, comment: str, status: str = "") -> str:
                 return f"Jira {issue.key} updated with comment and transitioned to {target['name']}."
             else:
                 print(f"⚠️ No transition matching '{status}'. Available: {available}")
+                return f"Jira {issue.key} updated with comment, but could not transition to '{status}'. Available: {[t['name'] for t in transitions]}"
         
         return f"Jira {issue.key} updated with comment."
 
@@ -100,7 +107,7 @@ def update_notion_status(title: str, new_status: str) -> str:
     Update the status of an existing bug entry in Notion.
     Args:
         title: Title of the bug/repo to find.
-        new_status: Options: "Open", "Needs attention", "Resolved".
+        new_status: Options: "Open", "Needs attention", "Deploying", "Resolved".
     """
     print(f"📋 Updating Notion status for '{title}' -> {new_status}")
     try:

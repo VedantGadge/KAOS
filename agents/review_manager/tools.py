@@ -171,7 +171,7 @@ def update_notion_status(title: str, new_status: str) -> str:
     Update the status of an existing bug entry in Notion.
     Args:
         title: Title of the bug to find (e.g., "NullPointerException in PaymentService").
-        new_status: New status to set. Options: "Open", "Needs attention", "In progress", "To be reviwed", "Resolved".
+        new_status: New status to set. Options: "Open", "Needs attention", "In progress", "To be reviwed", "Deploying", "Resolved".
     """
     print(f"📋 Updating Notion status for '{title}' -> {new_status}")
     try:
