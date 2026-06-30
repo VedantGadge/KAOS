@@ -14,6 +14,7 @@ boto3 = "^1.35.90"
 pydantic = "^2.10.0"
 pydantic-settings = "^2.7.0"
 python-dotenv = "^1.0.0"
+langgraph = "^0.2.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"

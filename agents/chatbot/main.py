@@ -7,83 +7,78 @@ import os
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from agents.base import BaseAgent
-from agents.chatbot.tools import tools as chatbot_tools
-from shared.logger import setup_logger
-
-logger = setup_logger("chatbot-agent")
+from agents.chatbot.graph import build_chatbot_graph
+from shared.logger import logger
 
 app = FastAPI(title="KAOS Chatbot Agent")
 
 # Allow CORS for Control Plane UI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, restrict to control plane URL
+    allow_origins=["*"],  # In production, restrict to control plane URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# System Prompt for the Chatbot
-SYSTEM_PROMPT = """
-You are the KAOS Chatbot (Agent 4).
-Your job is to help employees understand what is happening in the system.
-You have access to the entire event history, bug tracking, and team structure.
-
-# Capabilities
-1. **Bug History**: If asked "What happened with X?", use `get_bug_timeline`.
-2. **Search**: If asked "Did we have any NPEs?", use `search_events`.
-3. **Team Info**: If asked "Who owns X?", use `find_team_info`.
-4. **Ticket Status**: If asked "Is the ticket resolved?", use `get_jira_status`.
-
-# Rules
-- Be concise and friendly.
-- Synthesize the tool outputs into a clear narrative.
-- If the tool returns "No events found", tell the user you couldn't find anything.
-- If a bug was "Rejected" or "Failed", explain WHY based on the tool output details.
-- Always mention WHO (Actor) performed an action if available.
-"""
-
 class ChatRequest(BaseModel):
     question: str
     user_id: str = "anonymous"
 
+
 class ChatResponse(BaseModel):
     answer: str
-    tool_calls: list = [] # Optional debugging info
+
+
+# Compile the graph once at module level
+chatbot_graph = None
+
+
+@app.on_event("startup")
+def startup():
+    global chatbot_graph
+    logger.info("🚀 Compiling Chatbot LangGraph on startup...")
+    chatbot_graph = build_chatbot_graph()
+    logger.info("✅ Chatbot ready")
+
 
 @app.get("/")
 def health_check():
     return {"status": "running", "service": "kaos-chatbot"}
 
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
-    Chat with the KAOS system.
+    Chat with the KAOS system via the LangGraph ReAct agent.
     """
     logger.info(f"🗣️ User ({request.user_id}): {request.question}")
-    
+
     try:
-        # Initialize the AI Agent with our tools
-        agent = BaseAgent(
-            name="Chatbot",
-            tools=chatbot_tools,
-            instructions=SYSTEM_PROMPT
+        result = chatbot_graph.invoke(
+            {"messages": [{"role": "user", "content": request.question}]}
         )
-        
-        # Run the agent loop
-        response = agent.run(request.question)
-        
-        logger.info(f"🤖 Bot: {response}")
-        
-        return ChatResponse(
-            answer=response
-        )
+
+        # Extract the final AI message from the graph output
+        messages = result.get("messages", [])
+        answer = ""
+        for msg in reversed(messages):
+            if hasattr(msg, "content") and msg.type == "ai" and not msg.tool_calls:
+                answer = msg.content
+                break
+
+        if not answer:
+            answer = "I couldn't find an answer. Please try rephrasing your question."
+
+        logger.info(f"🤖 Bot: {answer[:100]}...")
+
+        return ChatResponse(answer=answer)
 
     except Exception as e:
         logger.error(f"❌ Chatbot error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn
