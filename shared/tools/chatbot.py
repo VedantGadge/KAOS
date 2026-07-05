@@ -82,11 +82,11 @@ def get_bug_timeline(service_name: str) -> str:
 @tool
 def search_events(keyword: str) -> str:
     """
-    Search for events containing a specific keyword or error message.
+    Search for events containing a specific keyword or conceptually similar to the query.
     """
-    logger.info(f"🤖 Chatbot: Searching for '{keyword}'...")
+    logger.info(f"🤖 Chatbot: Semantic Searching for '{keyword}'...")
     try:
-        results = event_logger.search_events(keyword)
+        results = event_logger.semantic_search_events(keyword)
         if not results:
             return f"No events found matching '{keyword}'."
         

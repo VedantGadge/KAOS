@@ -7,6 +7,8 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import text
+from pgvector.sqlalchemy import Vector
 import boto3
 from config.settings import settings
 
@@ -52,15 +54,10 @@ class PREvent(Base):
     repo = Column(String, nullable=True)
     actor = Column(String, nullable=True)
     # Store as Text for SQLite, but intended to be JSONB in Postgres ideally.
-    # For portability in this hybrid local/AWS setup without complex conditional types,
-    # we will store as JSON string in Text column for SQLite compatibility,
-    # OR we can use a custom type. For simplicity in this step, we use Text and serialize manually,
-    # which works on both. In a strict Postgres env, we'd use JSONB.
     details = Column(Text, nullable=True) 
     
-    # Store embedding as JSON string "[-0.1, ...]" for compatibility with SQLite & Postgres (without pgvector)
-    # in the initial phase.
-    embedding = Column(Text, nullable=True)
+    # Store embedding as pgvector Vector(384) since all-MiniLM-L6-v2 is 384d.
+    embedding = Column(Vector(384), nullable=True)
 
 class NotionTicket(Base):
     __tablename__ = 'notion_tickets'
@@ -88,9 +85,16 @@ class EventLogger:
     def __init__(self, connection_string: Optional[str] = None):
         # Default to local SQLite if no connection string provided
         if not connection_string:
-            connection_string = os.getenv("DATABASE_URL", "sqlite:///kaos_events.db")
+            connection_string = os.getenv("DATABASE_URL", "postgresql://kaos_user:kaos_password@localhost:5432/kaos_events")
         
         self.engine = create_engine(connection_string)
+        
+        # Ensure vector extension exists if using Postgres
+        if "postgres" in connection_string:
+            with self.engine.connect() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         
@@ -111,8 +115,66 @@ class EventLogger:
                 logger.error(f"❌ Failed to load embedding model: {e}")
         return self.embedding_model
 
+    def _generate_embedding_bedrock(self, text: str) -> Optional[List[float]]:
+        """Generate embedding using AWS Bedrock."""
+        if not text:
+            return None
+        try:
+            # boto3 client creation
+            bedrock = boto3.client(
+                'bedrock-runtime',
+                region_name=settings.AWS_REGION,
+                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
+            )
+            model_id = settings.BEDROCK_EMBEDDING_MODEL_ID or "cohere.embed-english-v3"
+            if "cohere" in model_id.lower():
+                body = json.dumps({
+                    "texts": [text],
+                    "input_type": "search_document"
+                })
+                response = bedrock.invoke_model(
+                    modelId=model_id,
+                    body=body,
+                    contentType="application/json",
+                    accept="application/json"
+                )
+                response_body = json.loads(response.get("body").read())
+                embeddings = response_body.get("embeddings", [])
+                if embeddings:
+                    # Match the 384 dimensions of database vector column
+                    embedding = embeddings[0]
+                    if len(embedding) > 384:
+                        embedding = embedding[:384]
+                    elif len(embedding) < 384:
+                        embedding = embedding + [0.0] * (384 - len(embedding))
+                    return embedding
+            else:
+                body = json.dumps({
+                    "inputText": text
+                })
+                response = bedrock.invoke_model(
+                    modelId=model_id,
+                    body=body,
+                    contentType="application/json",
+                    accept="application/json"
+                )
+                response_body = json.loads(response.get("body").read())
+                embedding = response_body.get("embedding", [])
+                if len(embedding) > 384:
+                    embedding = embedding[:384]
+                elif len(embedding) < 384:
+                    embedding = embedding + [0.0] * (384 - len(embedding))
+                return embedding
+        except Exception as e:
+            logger.error(f"⚠️ Bedrock embedding generation failed: {e}")
+            return None
+
     def _generate_embedding(self, text: str) -> Optional[List[float]]:
-        """Generate embedding using local Sentence Transformer."""
+        """Generate embedding using local Sentence Transformer or AWS Bedrock."""
+        if settings.USE_BEDROCK_EMBEDDINGS:
+            return self._generate_embedding_bedrock(text)
+            
         model = self._get_embedding_model()
         if not model or not text:
             return None
@@ -143,13 +205,15 @@ class EventLogger:
             # Auto-generate embedding if not provided and details exist
             if embedding is None and details:
                  # Check/Load model
-                 if self._get_embedding_model():
-                 # Construct text to embed
+                 if settings.USE_BEDROCK_EMBEDDINGS or self._get_embedding_model():
+                     # Construct text to embed
                      text_parts = []
                      if details.get("title"): text_parts.append(f"Title: {details['title']}")
                      if details.get("description"): text_parts.append(f"Description: {details['description']}")
                      if details.get("summary"): text_parts.append(f"Summary: {details['summary']}")
                      if details.get("body"): text_parts.append(f"Body: {details['body']}")
+                     if details.get("error_message"): text_parts.append(f"Error: {details['error_message']}")
+                     if details.get("comment"): text_parts.append(f"Comment: {details['comment']}")
                      
                      full_text = "\n".join(text_parts)
                      if full_text.strip():
@@ -157,7 +221,6 @@ class EventLogger:
                          embedding = self._generate_embedding(full_text)
 
             details_json = json.dumps(details) if details else "{}"
-            embedding_json = json.dumps(embedding) if embedding else None
             
             new_event = PREvent(
                 event_type=event_type,
@@ -165,7 +228,7 @@ class EventLogger:
                 repo=repo,
                 pr_id=str(pr_id) if pr_id else None,
                 details=details_json,
-                embedding=embedding_json,
+                embedding=embedding,
                 timestamp=datetime.utcnow()
             )
             session.add(new_event)
@@ -341,11 +404,9 @@ class EventLogger:
         """
         session = self.Session()
         try:
-            # Basic SQL LIKE query on the details JSON string
-            # In a real production app with Postgres, we'd use full-text search or pgvector
             search_term = f"%{keyword}%"
             events = session.query(PREvent).filter(
-                PREvent.details.like(search_term)
+                PREvent.details.ilike(search_term)
             ).order_by(PREvent.timestamp.desc()).limit(20).all()
             
             results = []
@@ -359,6 +420,42 @@ class EventLogger:
             return results
         except Exception as e:
             logger.error(f"❌ Error searching events for {keyword}: {e}")
+            return []
+        finally:
+            session.close()
+
+    def semantic_search_events(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Perform a semantic (fuzzy) search using pgvector cosine distance.
+        Finds events that are conceptually similar to the query, even if keywords don't match.
+        """
+        session = self.Session()
+        try:
+            logger.info(f"🧠 Generating query embedding for semantic search: '{query}'")
+            query_vector = self._generate_embedding(query)
+            if not query_vector:
+                logger.warning("⚠️ Could not generate query embedding. Falling back to keyword search.")
+                return self.search_events(query)
+
+            # Use pgvector cosine_distance (<=> operator) to find nearest neighbors
+            # Note: cosine_distance returns distance (0 = identical). We want smallest distance.
+            events = session.query(PREvent).filter(
+                PREvent.embedding.is_not(None)
+            ).order_by(
+                PREvent.embedding.cosine_distance(query_vector)
+            ).limit(top_k).all()
+
+            results = []
+            for event in events:
+                results.append({
+                    "timestamp": event.timestamp.isoformat(),
+                    "service": event.repo,
+                    "event_type": event.event_type,
+                    "details": json.loads(event.details) if event.details else {}
+                })
+            return results
+        except Exception as e:
+            logger.error(f"❌ Error in semantic search for '{query}': {e}")
             return []
         finally:
             session.close()

@@ -4,10 +4,14 @@ import os
 class Settings(BaseSettings):
     # Kafka
     BOOTSTRAP_SERVERS: str
-    SASL_USERNAME: str
-    SASL_PASSWORD: str
-    SECURITY_PROTOCOL: str = "SASL_SSL"
-    SASL_MECHANISM: str = "PLAIN"
+    SASL_USERNAME: str | None = None
+    SASL_PASSWORD: str | None = None
+    SECURITY_PROTOCOL: str = "PLAINTEXT"
+    SASL_MECHANISM: str | None = None
+
+    # Embeddings configuration for AWS Lambda
+    USE_BEDROCK_EMBEDDINGS: bool = False
+    BEDROCK_EMBEDDING_MODEL_ID: str = "cohere.embed-english-v3"
 
     # Kafka Topics
     TOPIC_QUALITY_REPORTS: str = "system.quality.reports"

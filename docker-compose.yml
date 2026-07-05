@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: kaos_postgres
+    environment:
+      POSTGRES_USER: kaos_user
+      POSTGRES_PASSWORD: kaos_password
+      POSTGRES_DB: kaos_events
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

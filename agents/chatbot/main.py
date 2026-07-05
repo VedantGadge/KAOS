@@ -55,6 +55,11 @@ async def chat(request: ChatRequest):
     """
     logger.info(f"🗣️ User ({request.user_id}): {request.question}")
 
+    global chatbot_graph
+    if chatbot_graph is None:
+        logger.info("🧠 Lazy-loading Chatbot LangGraph...")
+        chatbot_graph = build_chatbot_graph()
+
     try:
         result = chatbot_graph.invoke(
             {"messages": [{"role": "user", "content": request.question}]}

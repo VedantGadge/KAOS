@@ -6,11 +6,15 @@ class KafkaClient:
     def __init__(self):
         self.conf = {
             'bootstrap.servers': settings.BOOTSTRAP_SERVERS,
-            'security.protocol': settings.SECURITY_PROTOCOL,
-            'sasl.mechanism': settings.SASL_MECHANISM,
-            'sasl.username': settings.SASL_USERNAME,
-            'sasl.password': settings.SASL_PASSWORD,
         }
+        if settings.SECURITY_PROTOCOL:
+            self.conf['security.protocol'] = settings.SECURITY_PROTOCOL
+        if settings.SASL_MECHANISM:
+            self.conf['sasl.mechanism'] = settings.SASL_MECHANISM
+        if settings.SASL_USERNAME:
+            self.conf['sasl.username'] = settings.SASL_USERNAME
+        if settings.SASL_PASSWORD:
+            self.conf['sasl.password'] = settings.SASL_PASSWORD
 
     def create_producer(self):
         return Producer(self.conf)
