@@ -1,7 +1,7 @@
 from confluent_kafka import Producer, Consumer
 from config.settings import settings
 import json
-
+import certifi
 class KafkaClient:
     def __init__(self):
         self.conf = {
@@ -15,6 +15,9 @@ class KafkaClient:
             self.conf['sasl.username'] = settings.SASL_USERNAME
         if settings.SASL_PASSWORD:
             self.conf['sasl.password'] = settings.SASL_PASSWORD
+            
+        # Fix for AWS Lambda (Amazon Linux 2023) SSL verification
+        self.conf['ssl.ca.location'] = certifi.where()
 
     def create_producer(self):
         return Producer(self.conf)

@@ -5,7 +5,7 @@ from shared.utils.retries import retry_with_backoff
 
 @tool
 @retry_with_backoff(retries=3, backoff_in_seconds=2)
-def create_jira_ticket(summary: str, description: str, service_name: str, assignee: str = "", severity: str = "MEDIUM", project_key: str = "KAN") -> str:
+def create_jira_ticket(summary: str, description: str, service_name: str, assignee: str = "", severity: str = "MEDIUM", project_key: str = "KAOS") -> str:
     """
     Create a new Jira Bug issue.
     Args:

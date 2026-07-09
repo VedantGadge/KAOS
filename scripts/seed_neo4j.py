@@ -20,19 +20,19 @@ def seed_data():
     
     # Create People
     # 1. Alice (Senior Engineer, Active) - Owns AuthService
-    client.query("CREATE (:Person {name: 'Alice', role: 'Senior', status: 'Active', slack_id: '#alice', email: 'alice@kaos.com'})")
+    client.query("CREATE (:Person {name: 'Alice', role: 'Senior', status: 'Active', slack_id: '#dev-alice', email: 'alice@kaos.com'})")
     
     # 2. Bob (Junior Developer, On_Leave) - Owns PaymentService
-    client.query("CREATE (:Person {name: 'Bob', role: 'Junior', status: 'On_Leave', slack_id: '#bob', email: 'bob@kaos.com'})")
+    client.query("CREATE (:Person {name: 'Bob', role: 'Junior', status: 'On_Leave', slack_id: '#dev-bob', email: 'bob@kaos.com'})")
     
     # 3. Charlie (now Senior for Reviewer role) - Owns PaymentService
-    client.query("CREATE (:Person {name: 'Charlie', role: 'Senior', status: 'Active', slack_id: '#charlie', email: 'charlie@kaos.com'})")
+    client.query("CREATE (:Person {name: 'Charlie', role: 'Senior', status: 'Active', slack_id: '#dev-charlie', email: 'charlie@kaos.com'})")
 
     # 4. Dave (Senior Engineer, Active) - Owns PaymentService
-    client.query("CREATE (:Person {name: 'Dave', role: 'Senior', status: 'Active', slack_id: '#dave', email: 'dave@kaos.com'})")
+    client.query("CREATE (:Person {name: 'Dave', role: 'Senior', status: 'Active', slack_id: '#dev-dave', email: 'dave@kaos.com'})")
 
     # 5. dev_user (External, Active)
-    client.query("CREATE (:Person {name: 'dev_user', role: 'External', status: 'Active', slack_id: '#dave'})")
+    client.query("CREATE (:Person {name: 'dev_user', role: 'External', status: 'Active', slack_id: '#dev-dave'})")
 
     # Relationships
     

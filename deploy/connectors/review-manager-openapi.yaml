@@ -1,0 +1,25 @@
+openapi: 3.0.0
+info:
+  title: KAOS Review Manager Lambda API
+  version: 1.0.0
+servers:
+  - url: https://dnqhak6oxc.execute-api.ap-south-1.amazonaws.com
+paths:
+  /review/process:
+    post:
+      operationId: processEvent
+      summary: Process a PR review event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Event processed successfully
+          content:
+            application/json:
+              schema:
+                type: object

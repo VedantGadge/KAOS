@@ -1,0 +1,17 @@
+neo4j>=5.27.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+python-dotenv>=1.0.0
+jira>=3.6.0
+slack-sdk>=3.27.0
+PyGithub>=2.2.0
+fastapi>=0.109.0
+langchain>=0.1.0
+langchain-aws>=0.1.0
+langchain-community>=0.0.10
+langgraph>=0.2.0
+notion-client>=2.2.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+pgvector>=0.2.5
+mangum>=0.17.0

@@ -38,6 +38,23 @@ variable "db_password" {
   description = "Database master password"
 }
 
+variable "confluent_bootstrap_servers" {
+  type        = string
+  description = "Confluent Cloud Kafka bootstrap server URL"
+}
+
+variable "confluent_api_key" {
+  type        = string
+  sensitive   = true
+  description = "Confluent Cloud API Key"
+}
+
+variable "confluent_api_secret" {
+  type        = string
+  sensitive   = true
+  description = "Confluent Cloud API Secret"
+}
+
 # ─────────────────────────────────────────────
 # Networking (VPC & Subnets for RDS Free-Tier)
 # ─────────────────────────────────────────────
@@ -79,7 +96,7 @@ resource "aws_route_table" "public" {
   vpc_id = aws_vpc.kaos_vpc.id
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw;
+    gateway_id = aws_internet_gateway.igw.id
   }
 }
 
@@ -130,7 +147,7 @@ resource "aws_db_instance" "postgres" {
   max_allocated_storage  = 100
   db_name                = "kaos_events"
   engine                 = "postgres"
-  engine_version         = "15.4"
+  engine_version         = "17.5"
   instance_class         = "db.t3.micro" # 100% Free-Tier eligible for first 12 months
   username               = "kaos_user"
   password               = var.db_password
@@ -157,8 +174,58 @@ data "archive_file" "lambda_zip" {
     ".gemini",
     ".poetry",
     "tests",
-    "deploy/terraform/kaos_lambda.zip"
+    "deploy/terraform/kaos_lambda.zip",
+    "deploy/terraform/kaos_layer.zip",
+    "deploy/terraform/lambda_layer",
+    "deploy/terraform/.terraform"
   ]
+}
+
+# Upload code zip to S3 (Lambda code > 70MB must use S3)
+resource "aws_s3_object" "lambda_zip" {
+  bucket = aws_s3_bucket.lambda_artifacts.id
+  key    = "kaos_lambda.zip"
+  source = data.archive_file.lambda_zip.output_path
+  etag   = data.archive_file.lambda_zip.output_md5
+}
+
+# ─────────────────────────────────────────────
+# S3 Bucket for Lambda artifacts (layer > 70MB)
+# ─────────────────────────────────────────────
+resource "aws_s3_bucket" "lambda_artifacts" {
+  bucket        = "kaos-lambda-artifacts-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+
+  tags = {
+    Name        = "kaos-lambda-artifacts"
+    Environment = var.environment
+  }
+}
+
+data "aws_caller_identity" "current" {}
+
+# ─────────────────────────────────────────────
+# Lambda Layer (uploaded via S3 — supports >70MB)
+# ─────────────────────────────────────────────
+data "archive_file" "layer_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/lambda_layer"
+  output_path = "${path.module}/kaos_layer.zip"
+}
+
+resource "aws_s3_object" "layer_zip" {
+  bucket = aws_s3_bucket.lambda_artifacts.id
+  key    = "kaos_layer.zip"
+  source = data.archive_file.layer_zip.output_path
+  etag   = data.archive_file.layer_zip.output_md5
+}
+
+resource "aws_lambda_layer_version" "kaos_dependencies" {
+  s3_bucket         = aws_s3_bucket.lambda_artifacts.id
+  s3_key            = aws_s3_object.layer_zip.key
+  layer_name        = "kaos-dependencies"
+  compatible_runtimes = ["python3.12"]
+  source_code_hash  = data.archive_file.layer_zip.output_base64sha256
 }
 
 # ─────────────────────────────────────────────
@@ -206,19 +273,39 @@ resource "aws_iam_role_policy" "lambda_bedrock_policy" {
   })
 }
 
+# Lambda IAM policy to access Secrets Manager for Kafka credentials
+resource "aws_iam_role_policy" "lambda_secrets_policy" {
+  name = "kaos-lambda-secrets-policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [
+          aws_secretsmanager_secret.confluent_creds.arn
+        ]
+      }
+    ]
+  })
+}
+
 # ─────────────────────────────────────────────
 # Lambda Functions (Running outside VPC for free internet access)
 # ─────────────────────────────────────────────
 locals {
   common_env = {
-    BOOTSTRAP_SERVERS      = "pkc-xxxxx.us-east-1.aws.confluent.cloud:9092" # Place your Confluent broker endpoint here
-    SASL_USERNAME          = "YOUR_CONFLUENT_API_KEY"
-    SASL_PASSWORD          = "YOUR_CONFLUENT_API_SECRET"
+    BOOTSTRAP_SERVERS      = var.confluent_bootstrap_servers
+    SASL_USERNAME          = var.confluent_api_key
+    SASL_PASSWORD          = var.confluent_api_secret
     SECURITY_PROTOCOL      = "SASL_SSL"
     SASL_MECHANISM         = "PLAIN"
     DATABASE_URL           = "postgresql://${aws_db_instance.postgres.username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/${aws_db_instance.postgres.db_name}"
     USE_BEDROCK_EMBEDDINGS = "true"
-    AWS_REGION             = var.aws_region
   }
 }
 
@@ -226,12 +313,14 @@ locals {
 resource "aws_lambda_function" "triager" {
   function_name    = "kaos-triager"
   handler          = "agents.triager.lambda_handler.handler"
-  runtime          = "python3.11"
+  runtime          = "python3.12"
   role             = aws_iam_role.lambda_role.arn
-  filename         = data.archive_file.lambda_zip.output_path
+  s3_bucket        = aws_s3_bucket.lambda_artifacts.id
+  s3_key           = aws_s3_object.lambda_zip.key
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   timeout          = 60
   memory_size      = 512
+  layers           = [aws_lambda_layer_version.kaos_dependencies.arn]
 
   environment {
     variables = local.common_env
@@ -242,12 +331,14 @@ resource "aws_lambda_function" "triager" {
 resource "aws_lambda_function" "review_manager" {
   function_name    = "kaos-review-manager"
   handler          = "agents.review_manager.lambda_handler.handler"
-  runtime          = "python3.11"
+  runtime          = "python3.12"
   role             = aws_iam_role.lambda_role.arn
-  filename         = data.archive_file.lambda_zip.output_path
+  s3_bucket        = aws_s3_bucket.lambda_artifacts.id
+  s3_key           = aws_s3_object.lambda_zip.key
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   timeout          = 90
   memory_size      = 512
+  layers           = [aws_lambda_layer_version.kaos_dependencies.arn]
 
   environment {
     variables = local.common_env
@@ -258,12 +349,14 @@ resource "aws_lambda_function" "review_manager" {
 resource "aws_lambda_function" "ops_manager" {
   function_name    = "kaos-ops-manager"
   handler          = "agents.ops_manager.lambda_handler.handler"
-  runtime          = "python3.11"
+  runtime          = "python3.12"
   role             = aws_iam_role.lambda_role.arn
-  filename         = data.archive_file.lambda_zip.output_path
+  s3_bucket        = aws_s3_bucket.lambda_artifacts.id
+  s3_key           = aws_s3_object.lambda_zip.key
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   timeout          = 90
   memory_size      = 512
+  layers           = [aws_lambda_layer_version.kaos_dependencies.arn]
 
   environment {
     variables = local.common_env
@@ -274,12 +367,14 @@ resource "aws_lambda_function" "ops_manager" {
 resource "aws_lambda_function" "ingestion" {
   function_name    = "kaos-ingestion"
   handler          = "agents.ingestion.lambda_handler.handler"
-  runtime          = "python3.11"
+  runtime          = "python3.12"
   role             = aws_iam_role.lambda_role.arn
-  filename         = data.archive_file.lambda_zip.output_path
+  s3_bucket        = aws_s3_bucket.lambda_artifacts.id
+  s3_key           = aws_s3_object.lambda_zip.key
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   timeout          = 30
   memory_size      = 256
+  layers           = [aws_lambda_layer_version.kaos_dependencies.arn]
 
   environment {
     variables = local.common_env
@@ -290,12 +385,14 @@ resource "aws_lambda_function" "ingestion" {
 resource "aws_lambda_function" "chatbot" {
   function_name    = "kaos-chatbot"
   handler          = "agents.chatbot.lambda_handler.handler"
-  runtime          = "python3.11"
+  runtime          = "python3.12"
   role             = aws_iam_role.lambda_role.arn
-  filename         = data.archive_file.lambda_zip.output_path
+  s3_bucket        = aws_s3_bucket.lambda_artifacts.id
+  s3_key           = aws_s3_object.lambda_zip.key
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   timeout          = 90
   memory_size      = 512
+  layers           = [aws_lambda_layer_version.kaos_dependencies.arn]
 
   environment {
     variables = local.common_env
@@ -426,6 +523,109 @@ resource "aws_lambda_permission" "apigw_ops_manager" {
   function_name = aws_lambda_function.ops_manager.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.gateway.execution_arn}/*/*"
+}
+
+# ─────────────────────────────────────────────
+# Secrets Manager & AWS Lambda Event Source Mapping (Kafka)
+# ─────────────────────────────────────────────
+
+# Store Confluent credentials in Secrets Manager for Lambda ESM
+resource "aws_secretsmanager_secret" "confluent_creds" {
+  name                    = "kaos/confluent/kafka_creds_${data.aws_caller_identity.current.account_id}"
+  recovery_window_in_days = 0 # Force delete immediately for easy teardown
+}
+
+resource "aws_secretsmanager_secret_version" "confluent_creds_val" {
+  secret_id = aws_secretsmanager_secret.confluent_creds.id
+  secret_string = jsonencode({
+    username = var.confluent_api_key
+    password = var.confluent_api_secret
+  })
+}
+
+# Triager Kafka Trigger
+resource "aws_lambda_event_source_mapping" "triager_kafka" {
+  function_name     = aws_lambda_function.triager.arn
+  topics            = ["system.quality.reports"]
+  starting_position = "LATEST"
+
+  self_managed_event_source {
+    endpoints = {
+      KAFKA_BOOTSTRAP_SERVERS = var.confluent_bootstrap_servers
+    }
+  }
+  source_access_configuration {
+    type = "BASIC_AUTH"
+    uri  = aws_secretsmanager_secret.confluent_creds.arn
+  }
+}
+
+# Review Manager Kafka Trigger - PR Updates
+resource "aws_lambda_event_source_mapping" "review_mgr_kafka_updates" {
+  function_name     = aws_lambda_function.review_manager.arn
+  topics            = ["dev.pr.updates"]
+  starting_position = "LATEST"
+
+  self_managed_event_source {
+    endpoints = {
+      KAFKA_BOOTSTRAP_SERVERS = var.confluent_bootstrap_servers
+    }
+  }
+  source_access_configuration {
+    type = "BASIC_AUTH"
+    uri  = aws_secretsmanager_secret.confluent_creds.arn
+  }
+}
+
+# Review Manager Kafka Trigger - PR Decisions
+resource "aws_lambda_event_source_mapping" "review_mgr_kafka_decisions" {
+  function_name     = aws_lambda_function.review_manager.arn
+  topics            = ["dev.pr.decisions"]
+  starting_position = "LATEST"
+
+  self_managed_event_source {
+    endpoints = {
+      KAFKA_BOOTSTRAP_SERVERS = var.confluent_bootstrap_servers
+    }
+  }
+  source_access_configuration {
+    type = "BASIC_AUTH"
+    uri  = aws_secretsmanager_secret.confluent_creds.arn
+  }
+}
+
+# Ops Manager Kafka Trigger - Deploy Status
+resource "aws_lambda_event_source_mapping" "ops_mgr_kafka_deploy" {
+  function_name     = aws_lambda_function.ops_manager.arn
+  topics            = ["ops.deploy.status"]
+  starting_position = "LATEST"
+
+  self_managed_event_source {
+    endpoints = {
+      KAFKA_BOOTSTRAP_SERVERS = var.confluent_bootstrap_servers
+    }
+  }
+  source_access_configuration {
+    type = "BASIC_AUTH"
+    uri  = aws_secretsmanager_secret.confluent_creds.arn
+  }
+}
+
+# Ops Manager Kafka Trigger - Incidents
+resource "aws_lambda_event_source_mapping" "ops_mgr_kafka_incidents" {
+  function_name     = aws_lambda_function.ops_manager.arn
+  topics            = ["ops.incidents"]
+  starting_position = "LATEST"
+
+  self_managed_event_source {
+    endpoints = {
+      KAFKA_BOOTSTRAP_SERVERS = var.confluent_bootstrap_servers
+    }
+  }
+  source_access_configuration {
+    type = "BASIC_AUTH"
+    uri  = aws_secretsmanager_secret.confluent_creds.arn
+  }
 }
 
 # ─────────────────────────────────────────────

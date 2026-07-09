@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     GROUP_TRIAGER_PROD: str = "triager-prod-group"
 
     # Neo4j
-    NEO4J_URI: str
-    NEO4J_USERNAME: str
-    NEO4J_PASSWORD: str
+    NEO4J_URI: str = ""
+    NEO4J_USERNAME: str = ""
+    NEO4J_PASSWORD: str = ""
 
     # AWS
     AWS_ACCESS_KEY_ID: str | None = None
@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
 
     # Notion Integration
-    NOTION_API_KEY: str
-    NOTION_DATABASE_ID: str
+    NOTION_API_KEY: str = ""
+    NOTION_DATABASE_ID: str = ""
     
     # Slack Integration
     SLACK_BOT_TOKEN: str | None = None

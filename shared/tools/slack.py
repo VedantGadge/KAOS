@@ -43,9 +43,11 @@ def send_slack_message(
                 f"Here is the link: {notion_url}"
             )
         
-        client.chat_postMessage(channel=target_id, text=dm_text)
-        logger.info(f"✅ Slack message sent successfully to {target_id}!")
-        
+        try:
+            client.chat_postMessage(channel=target_id, text=dm_text)
+            logger.info(f"✅ Slack message sent successfully to {target_id}!")
+        except SlackApiError as e:
+            logger.warning(f"⚠️ Could not send DM to {target_id}: {e.response['error']}")
         announcement = (
             f"🚨 *Bug Report Alert*\n"
             f"───────────────────\n"
@@ -57,7 +59,7 @@ def send_slack_message(
             f"The team is on it. 🔧"
         )
         try:
-            client.chat_postMessage(channel="#all-kaos", text=announcement)
+            client.chat_postMessage(channel="C0AEPCBT9A5", text=announcement)
             logger.info(f"📢 Announcement posted in #all-kaos")
         except SlackApiError as e:
             logger.warning(f"⚠️ Could not post to #all-kaos: {e.response['error']}")
@@ -84,20 +86,21 @@ def send_slack_dm(channel: str, text: str) -> str:
         target_id = channel
 
         if not channel.startswith("U") and not channel.startswith("#") and not channel.startswith("@"):
-             logger.info(f"🔍 Looking up Slack ID for name: {channel}")
-             try:
-                 neo4j = Neo4jClient()
-                 query = "MATCH (p:Person) WHERE toLower(p.name) = toLower($name) RETURN p.slack_id as slack_id"
-                 res = neo4j.query(query, {"name": channel})
-                 neo4j.close()
-                 if res and res[0].get("slack_id"):
-                     target_id = res[0]["slack_id"]
-                     logger.info(f"✅ Resolved '{channel}' to Slack ID: {target_id}")
-                 else:
-                     logger.warning(f"⚠️ Could not resolve name '{channel}'. Defaulting to #all-kaos.")
-                     target_id = "#all-kaos" 
-             except Exception as e:
-                 logger.warning(f"⚠️ Neo4j Lookup failed: {e}")
+            logger.info(f"🔍 Looking up Slack ID for name: {channel}")
+            try:
+                neo4j = Neo4jClient()
+                query = "MATCH (p:Person) WHERE toLower(p.name) = toLower($name) RETURN p.slack_id as slack_id"
+                res = neo4j.query(query, {"name": channel})
+                neo4j.close()
+                if res and res[0].get("slack_id"):
+                    target_id = res[0]["slack_id"]
+                    logger.info(f"✅ Resolved '{channel}' to Slack ID: {target_id}")
+                else:
+                    logger.warning(f"⚠️ Could not resolve name '{channel}'. Defaulting to #all-kaos.")
+                    target_id = "C0AEPCBT9A5" 
+            except Exception as e:
+                logger.warning(f"⚠️ Neo4j Lookup failed: {e}")
+                target_id = "C0AEPCBT9A5"
 
         if target_id.startswith('U'):
             try:
@@ -125,7 +128,7 @@ def send_slack_broadcast(message: str) -> str:
     try:
         from slack_sdk import WebClient
         client = WebClient(token=settings.SLACK_BOT_TOKEN)
-        client.chat_postMessage(channel="#all-kaos", text=message)
+        client.chat_postMessage(channel="C0AEPCBT9A5", text=message)
         return "Broadcast sent to #all-kaos."
     except Exception as e:
         return f"Failed to send Slack broadcast: {str(e)}"

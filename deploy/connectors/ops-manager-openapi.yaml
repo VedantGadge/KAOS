@@ -1,0 +1,25 @@
+openapi: 3.0.0
+info:
+  title: KAOS Ops Manager Lambda API
+  version: 1.0.0
+servers:
+  - url: https://dnqhak6oxc.execute-api.ap-south-1.amazonaws.com
+paths:
+  /ops/process:
+    post:
+      operationId: processEvent
+      summary: Process an ops incident event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Event processed successfully
+          content:
+            application/json:
+              schema:
+                type: object

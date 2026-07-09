@@ -83,9 +83,10 @@ class JiraTicket(Base):
 
 class EventLogger:
     def __init__(self, connection_string: Optional[str] = None):
-        # Default to local SQLite if no connection string provided
+        # Default to settings if no connection string provided
         if not connection_string:
-            connection_string = os.getenv("DATABASE_URL", "postgresql://kaos_user:kaos_password@localhost:5432/kaos_events")
+            from config.settings import settings as _settings
+            connection_string = _settings.DATABASE_URL
         
         self.engine = create_engine(connection_string)
         

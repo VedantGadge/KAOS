@@ -18,3 +18,15 @@ Thumbs.db
 logs/
 *.log
 *.db
+
+# Terraform
+deploy/terraform/.terraform/
+deploy/terraform/.terraform.lock.hcl
+deploy/terraform/terraform.tfstate
+deploy/terraform/terraform.tfstate.backup
+deploy/terraform/tfplan
+deploy/terraform/terraform.tfvars
+
+# Lambda deployment artifacts (generated, never commit these)
+deploy/terraform/lambda_layer/
+deploy/terraform/*.zip

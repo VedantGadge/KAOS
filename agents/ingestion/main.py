@@ -87,9 +87,9 @@ async def handle_sentry_webhook(payload: Dict[str, Any], background_tasks: Backg
 
         # Publish in background to avoid blocking the webhook response
         background_tasks.add_task(
-            publish_to_kafka, 
-            topic=settings.TOPIC_QUALITY_REPORTS, 
-            key=event_id, 
+            publish_to_kafka,
+            topic=settings.TOPIC_QUALITY_REPORTS,
+            key=event_id,
             value=kafka_event
         )
 
